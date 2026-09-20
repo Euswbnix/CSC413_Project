@@ -187,22 +187,36 @@ def test_summary_is_serialisable_and_complete():
 
 
 def test_the_scalar_is_not_dominated_by_the_easiest_bin():
-    """MUST-FIRE, and it did: the first version averaged per-bin RATIOS, so predict-0's tiny
-    straight-bin denominator (2.33 deg against 38 in the curve bin) made one degree of
-    straight-bin error cost sixteen times one degree of curve-bin error. Models that genuinely
-    beat predict-0 on curves scored -0.46 to -0.94 overall.
+    """MUST-FIRE, and it did, on real runs rather than on a contrived example.
 
-    A model that is better than predict-0 where the errors are large must score POSITIVE,
-    even while losing on the easy bin.
+    The first version averaged per-bin RATIOS. Predict-0's MAE is 2.33 deg in the validation
+    straight bin and 38.0 in the curve bin, so dividing per bin makes one degree of
+    straight-bin error cost sixteen times one degree of curve-bin error. The figures below
+    are the ones three arms actually produced after five epochs -- every one of them beat
+    predict-0 where the errors are large, and every one scored between -0.46 and -0.94.
+
+    Averaging the MAEs first and dividing once puts the weight where the error is.
     """
-    true = np.concatenate([np.full(2000, 2.0), np.full(600, 9.0), np.full(400, 38.0)])
-    pred = np.concatenate([np.full(2000, 6.0),      # worse than predict-0 on straight
-                           np.full(600, 9.0),       # exact
-                           np.full(400, 36.0)])     # nearly exact where it is hard
+    # reconstruct the measured situation: straight 6.0 vs 2.33, gentle 9.5 vs 8.95,
+    # curve 28.7 vs 38.0
+    true = np.concatenate([np.full(2000, 2.33), np.full(600, 8.95), np.full(400, 38.0)])
+    pred = np.concatenate([np.full(2000, 2.33 + 6.0), np.full(600, 8.95 + 9.5),
+                           np.full(400, 38.0 - 28.7)])
     rows = per_bin(pred, true)
-    assert rows["straight [0,5)"]["mae_model"] > rows["straight [0,5)"]["mae_predict0"]
     assert rows["curve [15,inf)"]["mae_model"] < rows["curve [15,inf)"]["mae_predict0"]
-    assert macro_skill(pred, true) > 0.5
+    assert rows["straight [0,5)"]["mae_model"] > rows["straight [0,5)"]["mae_predict0"]
 
-    ratio_mean = 1.0 - np.mean([rows[b]["mae_model"] / rows[b]["mae_predict0"] for b in BIN_NAMES])
-    assert ratio_mean < 0, "the old aggregation should score this model negative"
+    ratio_mean = 1.0 - np.mean([rows[b]["mae_model"] / rows[b]["mae_predict0"]
+                                for b in BIN_NAMES])
+    assert ratio_mean == pytest.approx(-0.464, abs=0.01), "the aggregation we removed"
+    assert macro_skill(pred, true) == pytest.approx(0.103, abs=0.01)
+    assert ratio_mean < 0 < macro_skill(pred, true)
+
+
+def test_shrinkage_is_still_punished_under_the_new_aggregation():
+    """The property the scalar was chosen for must survive the fix: halving every target
+    must still lose to predicting it, because the curve bin dominates an average of MAEs."""
+    rng = np.random.default_rng(7)
+    true = rng.normal(0, 30, 6000)
+    assert macro_skill(0.5 * true, true) < macro_skill(true + rng.normal(0, 3, 6000), true)
+    assert macro_skill(np.zeros_like(true), true) == pytest.approx(0.0, abs=1e-12)
