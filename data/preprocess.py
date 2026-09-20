@@ -185,16 +185,18 @@ def main():
                    fill=(255, 80, 80) if bad else (255, 255, 0))
             cx, y0 = W // 2, H + BAR // 2
             d.line([(10, y0), (W - 10, y0)], fill=(90, 90, 90))
-            for edge, col in ((5, (70, 110, 70)), (15, (140, 140, 60)), (40, (170, 90, 60))):
-                for sgn in (-1, 1):
-                    x = cx + int(sgn * edge / FULL * span)
-                    d.line([(x, y0 - 9), (x, y0 + 9)], fill=col)
-                    if sgn > 0:
-                        d.text((x + 3, y0 + 8), str(edge), fill=col)
-            d.line([(cx, y0 - 14), (cx, y0 + 14)], fill=(200, 200, 200))
+            for edge, col in ((5, (70, 200, 70)), (15, (230, 230, 80)), (40, (255, 140, 90))):
+                d.text((cx + int(edge / FULL * span) + 3, y0 + 8), str(edge), fill=col)
+                d.text((cx - int(edge / FULL * span) - 14, y0 + 8), str(edge), fill=col)
             x = cx + int(max(-1.0, min(1.0, angles[i] / FULL)) * span)
             d.rectangle([min(cx, x), y0 - 5, max(cx, x), y0 + 5],
                         fill=(255, 80, 80) if bad else (90, 170, 255))
+            # ticks AFTER the bar, or the bar hides the thresholds it is meant to be read against
+            for edge, col in ((5, (70, 200, 70)), (15, (230, 230, 80)), (40, (255, 140, 90))):
+                for sgn in (-1, 1):
+                    xt = cx + int(sgn * edge / FULL * span)
+                    d.line([(xt, y0 - 9), (xt, y0 + 9)], fill=col)
+            d.line([(cx, y0 - 14), (cx, y0 + 14)], fill=(230, 230, 230))
             d.text((12, y0 - 20), "LEFT", fill=(120, 120, 120))
             d.text((W - 46, y0 - 20), "RIGHT", fill=(120, 120, 120))
             out.append(im)
