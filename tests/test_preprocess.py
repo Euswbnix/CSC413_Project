@@ -112,6 +112,19 @@ def test_splits_are_chronological_non_overlapping_and_buffered(processed):
     assert m["split_buffer"] >= 300
 
 
+def test_normalised_dt_is_saved_and_centred_on_one(processed):
+    """The median training step must be exactly 1.0: the gradient ratio between the CfC's
+    time head and its offset head equals |dt|, so an off-centre normalisation silently
+    re-weights the mechanism the project is about."""
+    out, _, _ = processed
+    dt = np.load(out / "dt_norm.npy")
+    m = json.loads((out / "manifest.json").read_text())
+    lo, hi = m["splits"]["train"]
+    assert dt.shape == (N,)
+    assert abs(float(np.median(dt[lo:hi])) - 1.0) < 1e-5
+    assert m["dt_median_train_s"] > 0
+
+
 def test_measured_frame_rate_is_recorded_and_not_assumed(processed):
     out, _, _ = processed
     m = json.loads((out / "manifest.json").read_text())
@@ -128,8 +141,9 @@ def test_the_processed_directory_drives_the_dataset(processed):
     starts = d.window_starts("train", 16)
     assert len(starts) > 0
     assert not any(DROPPED_ROW in range(s, s + 16) for s in starts.tolist())
-    f, y, v = next(iter(train_batches(d, 16, 4, k_deg_per_px=0.1, epoch_seed=0)))
+    b = next(iter(train_batches(d, 16, 4, k_deg_per_px=0.1, epoch_seed=0)))
+    f, y, v = b.frames, b.y, b.valid
     assert f.shape == (4, 16, 3, 66, 200) and y.shape == (4, 16) == v.shape
-    covered = sum(e - s for (s, e), _, _, _ in rollout_chunks(d, "test", chunk=256))
+    covered = sum(e - s for (s, e), _ in rollout_chunks(d, "test", chunk=256))
     lo, hi = d.manifest["splits"]["test"]
     assert covered == hi - lo

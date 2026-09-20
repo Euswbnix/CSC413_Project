@@ -119,6 +119,16 @@ def main():
     # Label dropouts: exactly 0.0 beside a large value, i.e. a logging default rather than a
     # centred wheel. Excluded from the normalisation statistics as well as from the loss --
     # leaving them in would drag the training mean toward zero using values we know are wrong.
+    # Per-frame elapsed time, normalised by the TRAIN-SPLIT median so the typical step is 1.0.
+    # Units matter: ||dL/dW_f|| / ||dL/dW_o|| at init equals |dt| exactly (the sigmoid
+    # derivative cancels between the two heads), so raw seconds at this frame rate would
+    # starve the time pathway ~17x relative to an offset head that can do the same job
+    # without dt -- the gate would learn to ignore time while every test stayed green.
+    if stamps is not None:
+        t = np.array([x.timestamp() for x in stamps])
+        dt_s = np.concatenate([[np.median(np.diff(t))], np.diff(t)])
+    else:
+        dt_s = np.ones(n)
     dropout = label_dropouts(angles)
     np.save(args.out / "label_dropout.npy", dropout)
     print(f"label dropouts: {int(dropout.sum())} frames ({dropout.mean():.2%}) "
@@ -154,6 +164,11 @@ def main():
     }
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     np.save(args.out / "angles_deg.npy", angles.astype(np.float32))
+    dt_med = float(np.median(dt_s[tr_lo:tr_hi]))
+    np.save(args.out / "dt_norm.npy", (dt_s / dt_med).astype(np.float32))
+    manifest["dt_median_train_s"] = dt_med
+    manifest["dt_norm_file"] = "dt_norm.npy"
+    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
     print(f"segments: {len(segs)}  buffer: {buffer}  splits: "
           + " ".join(f"{k}[{a},{b})" for k, (a, b) in splits.items()))
