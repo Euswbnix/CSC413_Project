@@ -136,9 +136,28 @@ def main():
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--name", default=None)
     ap.add_argument("--max-steps", type=int, default=None, help="smoke test only")
+    ap.add_argument("--min-free-gb", type=float, default=6.0,
+                    help="refuse to start below this much free VRAM; the box is shared")
+    ap.add_argument("--device", default=None, choices=("cpu", "cuda"))
     args = ap.parse_args()
 
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dev = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    if dev.type == "cuda":
+        free, total = torch.cuda.mem_get_info()
+        need = args.min_free_gb * 1024 ** 3
+        print(f"GPU: {free/1024**3:.1f} GiB free of {total/1024**3:.1f} GiB")
+        if free < need:
+            # This box is shared with other jobs. Discovering that mid-run costs an epoch and
+            # leaves a half-written run directory; discovering it here costs nothing. Never
+            # free the memory by killing the other process -- a pkill pattern one character
+            # too broad takes down someone's multi-hour job.
+            print(f"REFUSING TO START: {free/1024**3:.1f} GiB free, need "
+                  f"{args.min_free_gb:.1f}. Something else is using this GPU:", file=sys.stderr)
+            subprocess.run(["nvidia-smi", "--query-compute-apps=pid,used_memory",
+                            "--format=csv"], check=False)
+            print("Wait for it, run with --device cpu, or lower --min-free-gb if you are "
+                  "certain.", file=sys.stderr)
+            raise SystemExit(3)
     set_determinism(args.seed)
 
     name = args.name or "_".join(
