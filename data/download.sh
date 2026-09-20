@@ -10,12 +10,16 @@
 # chronological split exists to prevent, across a boundary the split logic cannot see.
 set -euo pipefail
 
+# CSC413_DATA_DIR redirects the dataset off the repo, for machines whose home is on a slow
+# network filesystem. Measured on a UTM lab box: NFS home 64 MB/s, local /var/tmp 3.0 GB/s --
+# a 47x difference that matters when preprocessing decodes 63,825 JPEGs one at a time.
+DATA_ROOT="${CSC413_DATA_DIR:-data}"
 VERSION="${1:-2018}"
 case "$VERSION" in
-  2018) FILE_ID="1PZWa6H0i1PCH9zuYcIh5Ouk_p-9Gh58B"; DEST="data/raw"
+  2018) FILE_ID="1PZWa6H0i1PCH9zuYcIh5Ouk_p-9Gh58B"; DEST="$DATA_ROOT/raw"
         EXPECT_TIMESTAMPS=1; EXPECT_FRAMES=63000
         KNOWN_SHA="${SULLYCHEN_2018_SHA256:-}" ;;
-  2017) FILE_ID="1Ue4XohCOV5YXy57S_5tDfCVqzLr101M7"; DEST="data/raw_2017"
+  2017) FILE_ID="1Ue4XohCOV5YXy57S_5tDfCVqzLr101M7"; DEST="$DATA_ROOT/raw_2017"
         EXPECT_TIMESTAMPS=0; EXPECT_FRAMES=45500
         KNOWN_SHA="${SULLYCHEN_2017_SHA256:-d25082b8890afea797ca39ebefac38904973d32c6b121906ddab073a2a8fbe5f}" ;;
   *) echo "usage: $0 [2018|2017]" >&2; exit 2 ;;
