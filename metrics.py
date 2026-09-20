@@ -163,6 +163,35 @@ def false_alarm_rate(pred, true, valid=None):
     return float((np.abs(p[m]) > FALSE_ALARM_EDGE).mean()) if m.any() else float("nan")
 
 
+COLLAPSE_R = 0.05          # |Pearson r| below this is no better than no correlation
+COLLAPSE_CURVE = 0.95      # curve-bin MAE within 5% of predict-0 is the baseline, not a model
+
+
+def collapsed(s):
+    """Did this run collapse to a constant predictor?
+
+    The dominant failure mode on this task, and it has to be a first-class outcome rather
+    than something read off a NaN. Measured across ten seeds: a collapsed run emits one
+    number regardless of input, so its false-alarm rate is exactly 0.000, its Pearson r is
+    undefined or indistinguishable from zero, and its curve-bin MAE sits within a degree of
+    the constant-zero baseline.
+
+    Reporting a median over a mixture of escaped and collapsed runs hides exactly the thing
+    that matters -- a set of seeds that lands 2 escaped / 8 collapsed has a median that
+    describes neither -- so the escape RATE is reported alongside metrics conditioned on
+    outcome. Takes a summary() dict.
+    """
+    if s.get("constant_prediction"):
+        return True
+    r = s.get("pearson_r")
+    bins = s.get("bins") or {}
+    curve = bins.get("curve [15,inf)", {})
+    m, base = curve.get("mae_model"), curve.get("mae_predict0")
+    near_baseline = bool(m and base and m > COLLAPSE_CURVE * base)
+    no_signal = (r is None) or (r != r) or (abs(r) < COLLAPSE_R)
+    return bool(no_signal and near_baseline)
+
+
 def summary(pred, true, valid=None):
     return {
         "macro_skill": macro_skill(pred, true, valid),

@@ -1,0 +1,62 @@
+{
+  "name": "cfc_s4_T16_lr0.001_k0.1_aug-full_shuf",
+  "arm": "cfc",
+  "seed": 4,
+  "best_epoch": 4,
+  "best_val_macro_skill": 0.06055086304039281,
+  "val": {
+    "macro_skill": 0.06055086304039281,
+    "macro_mae": 15.28245984453479,
+    "macro_mae_predict0": 16.267469140473413,
+    "global_mae": 10.725163459777832,
+    "pearson_r": 0.31469181530699575,
+    "constant_prediction": false,
+    "pred_std": 13.1174898147583,
+    "false_alarm_rate": 0.5556330066220662,
+    "n_valid": 192173,
+    "bins": {
+      "straight [0,5)": {
+        "n_frames": 117637,
+        "n_events": 30,
+        "mean_abs_true": 2.371663134816448,
+        "mae_model": 8.236979863903413,
+        "mae_predict0": 2.371663134816448,
+        "mae_persistence": 0.31801049780377266,
+        "p95_abs_err": 27.188122177124022
+      },
+      "gentle [5,15)": {
+        "n_frames": 51635,
+        "n_events": 47,
+        "mean_abs_true": 8.948313822413363,
+        "mae_model": 8.032214454850996,
+        "mae_predict0": 8.948313822413363,
+        "mae_persistence": 0.537012696355059,
+        "p95_abs_err": 23.058441448211664
+      },
+      "curve [15,inf)": {
+        "n_frames": 22901,
+        "n_events": 17,
+        "mean_abs_true": 37.48243046419042,
+        "mae_model": 29.578185214849963,
+        "mae_predict0": 37.48243046419042,
+        "mae_persistence": 2.159550745915827,
+        "p95_abs_err": 72.23068809509277
+      },
+      "(diagnostic) >=40": {
+        "n_frames": 8165,
+        "n_events": 6,
+        "mean_abs_true": 61.416800104294246,
+        "mae_model": 49.42005874187174,
+        "mae_predict0": 61.416800104294246,
+        "mae_persistence": 3.683008093287882,
+        "p95_abs_err": 112.39124069213862
+      }
+    }
+  },
+  "params": {
+    "encoder": 168244,
+    "recurrent": 24832,
+    "readout": 65,
+    "total": 193141
+  }
+}

@@ -236,3 +236,24 @@ def test_a_constant_predictor_is_reported_as_a_result_not_a_gap():
     assert s["pred_std"] == pytest.approx(0.0)
     assert np.isnan(s["pearson_r"])          # undefined, and now accompanied by the reason
     assert summary(true, true)["constant_prediction"] is False
+
+
+def test_collapse_is_detected_and_is_not_just_a_nan():
+    """MUST-FIRE both ways. Collapse is this task's dominant outcome, so the detector has to
+    fire on a constant predictor AND stay quiet on a model that is merely bad."""
+    from metrics import collapsed
+    true = np.concatenate([np.full(600, 2.0), np.full(300, 9.0), np.full(300, 30.0)])
+
+    # a genuinely collapsed run: one number, whatever the input
+    assert collapsed(summary(np.full(1200, 1.5), true)) is True
+
+    # a bad but real model: large errors, but it moves with the target
+    noisy = true + np.random.default_rng(0).normal(0, 8, 1200)
+    s = summary(noisy, true)
+    assert s["pearson_r"] > 0.05
+    assert collapsed(s) is False, "a bad model is not a collapsed one"
+
+    # the trap: near-zero r but real variance, and curve MAE well under baseline.
+    # Must NOT count as collapse -- it is doing something in the bin that matters.
+    pred = true.copy(); pred[:600] = np.random.default_rng(1).normal(0, 20, 600)
+    assert collapsed(summary(pred, true)) is False
