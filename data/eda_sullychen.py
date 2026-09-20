@@ -147,18 +147,19 @@ def timing_stats(stamps, out):
     # it is a DROPPED-FRAME COUNT, taking essentially three values. That is a far stronger
     # thing to write than "sampling is irregular", and it means the CfC's elapsed-time input
     # carries a physically meaningful quantity rather than noise.
-    best = min(((b, float(np.median(np.abs(dt / b - np.round(dt / b)))))
+    dt_ms = dt * 1000.0                      # dt is in SECONDS here; fit in milliseconds
+    best = min(((b, float(np.median(np.abs(dt_ms / b - np.round(dt_ms / b)))))
                 for b in np.arange(24.0, 36.01, 0.05)), key=lambda x: x[1])
-    base = best[0]
-    kr = np.round(dt / base)
-    within = float((np.abs(dt - kr * base) < 0.005).mean())
-    out(f"base capture interval    : {base*1000:.2f} ms ({1/base:.1f} Hz), fitted")
+    base = best[0]                           # ms
+    kr = np.round(dt_ms / base)
+    within = float((np.abs(dt_ms - kr * base) < 5.0).mean())
+    out(f"base capture interval    : {base:.2f} ms ({1000/base:.1f} Hz), fitted")
     out(f"  gaps within 5 ms of an exact multiple : {100*within:.1f}%")
     for k in (1, 2, 3):
         m = kr == k
         if m.sum():
             out(f"  k={k} ({'no drop' if k == 1 else f'{k-1} frame(s) dropped'})"
-                f" : {int(m.sum()):>6} ({100*m.mean():>5.2f}%)  mean {dt[m].mean()*1000:.1f} ms")
+                f" : {int(m.sum()):>6} ({100*m.mean():>5.2f}%)  mean {dt_ms[m].mean():.1f} ms")
     rare = int((kr > 3).sum())
     if rare:
         out(f"  k>3 (longer dropouts)        : {rare}")
@@ -532,15 +533,19 @@ def image_audit(root, names, a, splits, out, figdir, buffer):
     # stripe PARALLEL to the diagonal at a fixed offset -- a secondary peak in the mean
     # similarity as a function of |i-j|. Scene-type similarity instead makes broad blocks,
     # which raise the whole profile without putting a bump anywhere.
-    offs = np.arange(band + 1, n)
+    # Cap the offset range at n//2. Beyond that each diagonal holds only a handful of
+    # elements, its mean is noise, and a polynomial trend extrapolates badly into the corner
+    # -- which produced a confident 8-sigma "stripe" at an offset equal to the entire
+    # recording length, i.e. an edge artifact, on the first version of this check.
+    offs = np.arange(band + 1, max(band + 2, n // 2))
     prof = np.array([float(np.mean(np.diagonal(S, d))) for d in offs])
     if len(prof) > 20:
         basefit = np.poly1d(np.polyfit(offs, prof, 3))(offs)      # the slow scenery trend
         resid = prof - basefit
         pk = int(np.argmax(resid))
-        out(f"  offset profile: mean similarity vs |i-j|, detrended")
+        out(f"  offset profile: mean similarity vs |i-j|, detrended, offsets up to n/2")
         out(f"    strongest secondary peak   : +{resid[pk]:.3f} at offset"
-            f" {int(offs[pk]) * stride} raw frames")
+            f" {int(offs[pk]) * stride} raw frames ({n - int(offs[pk])} frame pairs averaged)")
         out(f"    profile std around the trend: {float(resid.std()):.3f}")
         z = resid[pk] / (resid.std() + 1e-9)
         if z > 5:
