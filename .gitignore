@@ -7,6 +7,8 @@ data/processed/
 *.jpg
 *.jpeg
 *.png
+*.gif
+*.mp4
 !figures/.gitkeep
 runs/*/checkpoints/
 __pycache__/
