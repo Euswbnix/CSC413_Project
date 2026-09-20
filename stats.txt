@@ -1,0 +1,75 @@
+==============================================================================
+SullyChen driving dataset -- EDA
+==============================================================================
+
+--- file / row correspondence ---
+data.txt lines           : 63825
+.jpg files in archive    : 63825
+files with no label line : 0  (expect ~161; see repo issue #2)
+label lines with no file : 0  (MUST be 0)
+RULE: data.txt line i IS memmap row i. preprocess.py parses data.txt in order and never calls glob.
+
+--- timing ---
+non-monotonic timestamps : 0  (should be 0)
+duration                 : 55.9 min
+Δt median/p1/p99         : 57.0 / 28.0 / 101.0 ms
+MEASURED effective fps   : 17.54   <-- use this, never '~30 fps'
+gaps > 0.5 s             : 0 at frame indices []
+contiguous segments      : 1  (shortest 63825 frames)
+p99/p50 Δt ratio         : 1.772
+  => sampling is genuinely IRREGULAR. The CfC's elapsed-time input is doing real work here rather than receiving a constant, so the uniform-vs-true-Δt ablation is a real experiment and the continuous-time story is exercised on measured irregularity rather than on synthetic frame dropping.
+
+--- angles ---
+frames                   : 63825
+angle min/max            : -338.82 / 252.61 deg   <-- TRUE extremes; the '±100' in the literature is bulk-of-distribution over the first 40k frames
+angle p1/p25/p50/p75/p99 : -87.38 / -4.34 / 1.51 / 7.06 / 76.34
+|angle| p50/p99/max      : 5.24 / 122.10 / 338.82
+  frac |angle| <   1      : 0.1433
+  frac |angle| <   2      : 0.2551
+  frac |angle| <   5      : 0.4889
+  frac |angle| <  15      : 0.7794
+  frac |angle| <  40      : 0.9258
+  frac |angle| < 100      : 0.9865
+  frac |angle| >= 40       : 0.07425   <-- decides whether the sharp bin is viable at all
+adjacent-frame |Δangle|  : median 0.100 deg, frac < 1 deg 0.8771
+  ^ this is the irreducible-error / noise-floor ingredient for Justification.
+
+--- autocorrelation ---
+  ACF lag     1          : +0.9763
+  ACF lag     5          : +0.9667
+  ACF lag    15          : +0.8966
+  ACF lag    30          : +0.7265
+  ACF lag    90          : +0.1674
+  ACF lag   300          : -0.0129
+  ACF lag   900          : -0.0219
+  ACF lag  1800          : +0.0412
+first lag with |r| < 0.1  : 300
+=> SPLIT BUFFER           : 300 frames  (max(measured decorrelation lag, 300))
+
+--- split ---
+  train  frames [0, 37995)  n=37995  (36.1 min)
+  val    frames [38595, 50760)  n=12165  (11.6 min)
+  test   frames [51360, 63825)  n=12465  (11.8 min)
+  discarded buffer bands : 2 x 300 frames
+  STRICTLY CHRONOLOGICAL. The widely-copied loader for this dataset shuffles before splitting 80/20 with no seed and no test set, so neighbouring near-duplicate frames land in both train and val and the metrics are badly inflated.
+
+(split x bin) -- the table every later interpretation depends on
+split  bin                frames       %  minutes  events  mean|a|    MAE@0  MAE@persist
+train  straight [0,5)      16183  42.59%    15.37     458     1.95     1.95        1.221
+train  gentle [5,15)       11391  29.98%    10.82     251     9.35     9.35        0.526
+train  curve [15,inf)      10421  27.43%     9.90     101    43.47    43.47        1.933
+train    (of which >=40)     3829  10.08%     3.64      39    78.40    78.40   diagnostic
+val    straight [0,5)       7497  61.63%     7.12      99     2.33     2.33        0.588
+val    gentle [5,15)        3230  26.55%     3.07      47     8.95     8.95        0.431
+val    curve [15,inf)       1438  11.82%     1.37      17    37.99    37.99        1.782
+val      (of which >=40)      517   4.25%     0.49       6    62.52    62.52   diagnostic
+test   straight [0,5)       6879  55.19%     6.54     122     2.25     2.25        0.585
+test   gentle [5,15)        3812  30.58%     3.62      64     9.04     9.04        0.462
+test   curve [15,inf)       1774  14.23%     1.69      19    28.86    28.86        1.196
+test     (of which >=40)      146   1.17%     0.14       2   127.03   127.03   diagnostic
+
+persistence (y_hat_t = y_{t-1}) is reported because it is the naive baseline a grader will actually think of. The model receives images only and no past TRUE angles, so persistence is not a solution to the posed task and is unavailable the moment labels are absent -- which is always, at deployment. Report it, then dispose of it in one paragraph.
+
+--- GATE G1 ---
+test curve bin [15,inf): 1774 frames across 19 independent turn events
+PASS -- keep the four bins as specified.
