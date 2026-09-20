@@ -332,14 +332,14 @@ def main():
 
     if args.images:
         out("\n--- pixel-side audit ---")
-        image_audit(args.data_root, names, a, splits, out, args.figures)
+        image_audit(args.data_root, names, a, splits, out, args.figures, buffer)
 
     figures(a, stamps, splits, fps, args.figures)
     args.out.write_text("\n".join(lines) + "\n")
     out(f"\nwrote {args.out} and figures to {args.figures}/")
 
 
-def image_audit(root, names, a, splits, out, figdir):
+def image_audit(root, names, a, splits, out, figdir, buffer):
     """Stationary-segment mask + revisit audit, in the SINGLE decode pass.
 
     Part of the near-zero mass is a STOPPED CAR, not lane-keeping micro-correction: the
@@ -397,19 +397,65 @@ def image_audit(root, names, a, splits, out, figdir):
             " dropped, kept, or reported separately. Part of the near-zero mass is a"
             " STOPPED CAR, which makes predict-0 artificially stronger in the straight bin.")
     figdir.mkdir(parents=True, exist_ok=True)
+    figdir.mkdir(parents=True, exist_ok=True)
     D = np.stack(desc)
     D = (D - D.mean(1, keepdims=True)) / (D.std(1, keepdims=True) + 1e-6)
     S = D @ D.T / D.shape[1]
-    np.fill_diagonal(S, 0)
-    out(f"revisit audit: max off-diagonal descriptor similarity {S.max():.3f}")
-    out("  bright bands far from the diagonal mean the route RETRACES -- in which case the"
-        " buffer does not prevent leakage at all (same corner, different lap, train and"
-        " test). If so, report the headline table twice: full test set and leak-free subset.")
+
+    # Exclude a BAND around the diagonal, not just the diagonal itself. At the measured frame
+    # rate neighbouring frames are near-identical by construction, so a bare fill_diagonal
+    # leaves max similarity pinned at ~1.0 and the audit cannot distinguish "consecutive
+    # frames look alike" (trivially true, uninformative) from "the route retraces" (the thing
+    # that would defeat the split buffer entirely: same corner, different lap, train and test).
+    band = max(1, -(-buffer // stride))          # the decorrelation lag, in subsampled units
+    n = S.shape[0]
+    ii = np.arange(n)
+    near = np.abs(ii[:, None] - ii[None, :]) <= band
+    S_far = np.where(near, -np.inf, S)
+    out(f"revisit audit: exclusion band = +/-{band} subsampled frames (= {buffer} raw frames,"
+        f" the measured decorrelation lag)")
+    out(f"  max similarity WITHIN the band  : {float(np.where(near, S, -np.inf).max()):.3f}"
+        "   (expected ~1.0; this is the uninformative one)")
+    out(f"  max similarity OUTSIDE the band : {float(S_far.max()):.3f}   <-- the one that matters")
+    thr = 0.9
+    pairs = np.argwhere(S_far > thr)
+    pairs = pairs[pairs[:, 0] < pairs[:, 1]]
+    out(f"  pairs with similarity > {thr}      : {len(pairs)}")
+    if len(pairs):
+        sep = np.abs(pairs[:, 0] - pairs[:, 1]) * stride
+        out(f"  their raw-frame separation      : median {int(np.median(sep))},"
+            f" max {int(sep.max())}")
+        out("  CAUTION: a stopped car produces identical frames at two unrelated times, so"
+            " high similarity far from the diagonal is NOT automatically a revisit -- cross-"
+            "check these indices against the likely-stationary mask before concluding.")
+    else:
+        out("  no far-from-diagonal near-duplicates: no evidence the route retraces.")
+
+    # The measure that actually quantifies leakage: how close is each TEST frame to its
+    # nearest TRAINING frame? Chunked over query blocks, keeping only a running minimum.
+    raw = idx[: len(desc)] if len(idx) != len(desc) else idx
+    tr_lo, tr_hi = splits["train"]
+    te_lo, te_hi = splits["test"]
+    tr = np.flatnonzero((raw >= tr_lo) & (raw < tr_hi))
+    te = np.flatnonzero((raw >= te_lo) & (raw < te_hi))
+    if len(tr) and len(te):
+        best = np.full(len(te), -np.inf)
+        for a in range(0, len(te), 512):
+            blk = D[te[a:a + 512]] @ D[tr].T / D.shape[1]
+            best[a:a + 512] = blk.max(1)
+        q = np.percentile(best, [50, 95, 99, 100])
+        out(f"  test->train nearest-neighbour similarity p50/p95/p99/max:"
+            f" {q[0]:.3f} / {q[1]:.3f} / {q[2]:.3f} / {q[3]:.3f}")
+        out(f"  test frames with a train neighbour > {thr}: {int((best > thr).sum())}"
+            f" / {len(te)} ({100*float((best > thr).mean()):.2f}%)")
+        out("  If that fraction is non-trivial the buffer did not prevent leakage and the"
+            " headline table must be reported twice: full test set, and leak-free subset.")
     try:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(6, 6))
-        ax.imshow(S, cmap="magma"); ax.set_title("frame self-similarity (subsampled)")
+        ax.imshow(S, cmap="magma", vmin=0, vmax=1)
+        ax.set_title("frame self-similarity (subsampled)")
         fig.tight_layout(); fig.savefig(figdir / "revisit_similarity.png", dpi=150); plt.close(fig)
     except ImportError:
         pass
