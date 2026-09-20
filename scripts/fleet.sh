@@ -25,9 +25,12 @@ set -uo pipefail
 
 FLEET="${CSC413_FLEET:-}"
 DATA_LOCAL="${CSC413_DATA_LOCAL:-/var/tmp/csc413_data/processed}"
-DATA_STAGE="${CSC413_DATA_STAGE:-$HOME/csc413_stage}"
+# RELATIVE on purpose: it is resolved by the REMOTE shell, in the remote home. Writing
+# $HOME here expands on the machine running this script -- which is the laptop, not the
+# fleet -- and the stage step then tries to mkdir /Users/... on a Linux box.
+DATA_STAGE="${CSC413_DATA_STAGE:-csc413_stage}"
 RUNS_LOCAL="${CSC413_RUNS_LOCAL:-/var/tmp/csc413_runs}"
-RUNS_HOME="${CSC413_RUNS_HOME:-$HOME/csc413/runs_fleet}"
+RUNS_HOME="${CSC413_RUNS_HOME:-runs_fleet}"   # local to wherever this script runs
 PER_HOST="${CSC413_PER_HOST:-5}"
 CMD="${1:-help}"; shift || true
 
@@ -47,10 +50,9 @@ survey)
 
 stage)
   # One 3 GB write to the shared home. Every host reads it from there, so no host-to-host auth.
-  mkdir -p "$DATA_STAGE"
   echo "==> staging $DATA_LOCAL -> $DATA_STAGE (shared home)"
   src=$(echo $FLEET | awk '{print $1}')
-  ssh -o BatchMode=yes "$src" "mkdir -p $DATA_STAGE && cp -u $DATA_LOCAL/* $DATA_STAGE/ && ls -la $DATA_STAGE"
+  ssh -o BatchMode=yes "$src" "mkdir -p \$HOME/$DATA_STAGE && cp -u $DATA_LOCAL/* \$HOME/$DATA_STAGE/ && du -sh \$HOME/$DATA_STAGE && ls \$HOME/$DATA_STAGE"
   ;;
 
 provision)
@@ -58,7 +60,7 @@ provision)
     ( echo "  provisioning $h"
       ssh -o BatchMode=yes "$h" "
         mkdir -p $DATA_LOCAL $RUNS_LOCAL
-        for f in $DATA_STAGE/*; do
+        for f in \$HOME/$DATA_STAGE/*; do
           b=\$(basename \$f)
           [ -f $DATA_LOCAL/\$b ] && [ \$(stat -c%s \$f) -eq \$(stat -c%s $DATA_LOCAL/\$b) ] && continue
           cp \$f $DATA_LOCAL/
