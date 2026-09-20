@@ -200,8 +200,14 @@ def augment_batch(frames, labels_deg, *, k_deg_per_px, model_w, generator=None,
 
 # ----------------------------------------------------------------------- iterators
 
-def train_batches(data, T, batch_size, k_deg_per_px, epoch_seed, per_frame_bug=False):
-    """Random-start windows, augmented. Yields (frames, standardised labels)."""
+def train_batches(data, T, batch_size, k_deg_per_px, epoch_seed, per_frame_bug=False,
+                  photometric=True):
+    """Random-start windows, augmented. Yields Batch with standardised labels.
+
+    `photometric=False` disables flip, brightness and shadow so that `--aug none` means what
+    it says. Without it "no augmentation" would still flip and re-light every window, and the
+    ablation row would compare full augmentation against most of it.
+    """
     g = torch.Generator(device="cpu").manual_seed(epoch_seed)
     starts = data.window_starts("train", T)
     n = data.windows_per_epoch("train", T)
@@ -209,8 +215,9 @@ def train_batches(data, T, batch_size, k_deg_per_px, epoch_seed, per_frame_bug=F
     gdev = torch.Generator(device=data.device).manual_seed(epoch_seed)
     for i in range(0, n - batch_size + 1, batch_size):
         b = data.gather(pick[i:i + batch_size], T)
+        off = {} if photometric else dict(brightness=0.0, shadow_prob=0.0, flip_prob=0.0)
         f, y = augment_batch(b.frames, b.y, k_deg_per_px=k_deg_per_px, model_w=data.model_w,
-                             generator=gdev, per_frame_bug=per_frame_bug)
+                             generator=gdev, per_frame_bug=per_frame_bug, **off)
         yield Batch(f, data.standardise(y), b.valid, b.dt)
 
 

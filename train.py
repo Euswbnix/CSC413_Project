@@ -124,7 +124,9 @@ def main():
     ap.add_argument("--T", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--k", type=float, default=0.1, help="translation coefficient, deg/px")
-    ap.add_argument("--aug", choices=("none", "photometric", "full"), default="full")
+    ap.add_argument("--aug", choices=("none", "basic", "full"), default="full",
+                    help="none = no augmentation; basic = flip+brightness+shadow, k=0; "
+                         "full = basic + translation with steering compensation at k")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--fixed-dt", action="store_true", help="feed dt=1 everywhere (question 2)")
     ap.add_argument("--shuffle-frames", action="store_true", help="permute order at TRAIN time")
@@ -150,7 +152,7 @@ def main():
     data = SteeringData(args.processed, device=dev, pin=True)
     model = build_arm(args.arm).to(dev)
     brk = model.param_breakdown()
-    k_eff = 0.0 if args.aug in ("none", "photometric") else args.k
+    k_eff = args.k if args.aug == "full" else 0.0
     photo = args.aug != "none"
 
     cfg = dict(vars(args), arm_params=brk, device=str(dev), git_sha=git_sha(),
@@ -179,10 +181,9 @@ def main():
         t0, tot, nb = time.time(), 0.0, 0
         for step, b in enumerate(train_batches(
                 data, args.T, FIXED["batch_size"], k_deg_per_px=k_eff,
-                epoch_seed=args.seed * 1000 + epoch, per_frame_bug=args.per_frame_bug)):
+                epoch_seed=args.seed * 1000 + epoch, per_frame_bug=args.per_frame_bug,
+                photometric=photo)):
             f, y, v, dt = b
-            if not photo:
-                pass          # augment_batch already applied; 'none' is expressed via k=0
             if args.shuffle_frames:
                 f, y, v, dt = shuffle_within_windows(f, y, v, dt, gen)
             if args.fixed_dt:

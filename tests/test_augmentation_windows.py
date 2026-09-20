@@ -118,3 +118,19 @@ def test_photometric_augmentation_does_not_touch_the_label():
     _, lab = augment_batch(f, y, k_deg_per_px=0.0, model_w=MW, generator=g(13),
                            brightness=0.4, shadow_prob=1.0, flip_prob=0.0)
     torch.testing.assert_close(lab, y, rtol=0, atol=0)
+
+
+def test_aug_none_really_means_none():
+    """MUST-FIRE: `--aug none` is one arm of the ablation. If the switch were cosmetic the
+    row would compare full augmentation against most of it and the Advanced Concept claim
+    would rest on a difference that was never controlled."""
+    import torch as _t
+    from data.dataset import augment_batch as _ab
+    f = _t.rand(4, 8, C, H, W, generator=g(20))
+    y = _t.randn(4, 8, generator=g(21)) * 20
+    out, lab = _ab(f, y, k_deg_per_px=0.0, model_w=MW, generator=g(22),
+                   brightness=0.0, shadow_prob=0.0, flip_prob=0.0)
+    torch.testing.assert_close(lab, y, rtol=0, atol=0)
+    torch.testing.assert_close(out, center_crop(f, MW), rtol=0, atol=0)
+    on, _ = _ab(f, y, k_deg_per_px=0.0, model_w=MW, generator=g(22))
+    assert (on - center_crop(f, MW)).abs().max() > 0, "augmentation ON changed nothing"
