@@ -44,7 +44,12 @@ BIN_EDGES = [0.0, 5.0, 15.0, 40.0, np.inf]
 BIN_NAMES = ["straight [0,5)", "gentle [5,15)", "medium [15,40)", "sharp [40,inf)"]
 THRESHOLDS = [1, 2, 5, 15, 40, 100]   # emits the fraction above 40, which BIN_EDGES needs
 ACF_LAGS = [1, 5, 15, 30, 90, 300, 900, 1800]
-SPLIT_FRACTIONS = (0.70, 0.15, 0.15)
+# [DECISION 2026-09-19] 60/20/20, not 70/15/15. Still strictly chronological with the
+# measured buffer -- only the cut points moved. At 70/15/15 the validation split held just 6
+# independent curve events, so model selection would have rested on a handful of corners
+# (REVIEW A2 predicted exactly this). 60/20/20 gives val 17 and test 19, at the cost of 14%
+# of the training frames -- cheap, given the compute situation.
+SPLIT_FRACTIONS = (0.60, 0.20, 0.20)
 MIN_BUFFER = 300
 EVENT_MERGE_GAP = 15                  # runs closer than this are one turn event
 
@@ -230,6 +235,12 @@ def split_bin_table(a, splits, fps, out):
                 f" {absseg[m].mean():>8.2f} {mae0:>8.2f} {maep:>12.3f}")
             if bname == BIN_NAMES[-1]:
                 gate[sname] = (n, ev)
+        d = (absseg >= DIAGNOSTIC_EDGE)
+        if d.any():
+            out(f"{sname:6} {'  (of which >=40)':16} {int(d.sum()):>8} {d.mean():>7.2%}"
+                f" {int(d.sum())/(fps*60) if fps else float('nan'):>8.2f}"
+                f" {count_turn_events(d):>7} {absseg[d].mean():>8.2f} {absseg[d].mean():>8.2f}"
+                f" {'diagnostic':>12}")
     out("\npersistence (y_hat_t = y_{t-1}) is reported because it is the naive baseline a"
         " grader will actually think of. The model receives images only and no past TRUE"
         " angles, so persistence is not a solution to the posed task and is unavailable the"
@@ -242,7 +253,7 @@ def gate_g1(gate, out):
     out("\n--- GATE G1 ---")
     n_test, ev_test = gate.get("test", (0, 0))
     ok = n_test >= 300 and ev_test >= 10
-    out(f"test sharp bin: {n_test} frames across {ev_test} independent turn events")
+    out(f"test curve bin [15,inf): {n_test} frames across {ev_test} independent turn events")
     if ok:
         out("PASS -- keep the four bins as specified.")
     else:
