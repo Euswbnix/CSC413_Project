@@ -38,17 +38,16 @@ from models.interface import build_arm
 def rollout_predictions(model, data, split, chunk, fixed_dt):
     """Returns (pred_deg, true_deg, valid) covering the split exactly once, in order."""
     model.eval()
-    P, Y, V, hx, prev_end = [], [], [], None, None
-    for (s, e), b in rollout_chunks(data, split, chunk=chunk):
-        if prev_end != s:          # a new segment: the state must not cross the gap
-            hx = None
+    P, Y, V, hx, seg = [], [], [], None, None
+    for (seg_i, s, e), b in rollout_chunks(data, split, chunk=chunk):
+        if seg_i != seg:           # a new segment: the state must not cross the gap
+            hx, seg = None, seg_i
         dt = torch.ones_like(b.dt) if fixed_dt else b.dt
         pred, hx = model(b.frames, dt=dt, hx=hx)
         hx = hx.detach() if torch.is_tensor(hx) else hx
         P.append(pred.squeeze(-1).squeeze(0).float().cpu())
         Y.append(b.y.squeeze(0).float().cpu())
         V.append(b.valid.squeeze(0).cpu())
-        prev_end = e
     p = data.to_degrees(torch.cat(P)).numpy()
     y = data.to_degrees(torch.cat(Y)).numpy()
     return p, y, torch.cat(V).numpy()

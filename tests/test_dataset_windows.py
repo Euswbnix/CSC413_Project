@@ -137,7 +137,7 @@ def test_chunked_rollout_covers_every_frame_once(data, split, chunk):
     for a, b in SEGMENTS:
         expected |= set(range(max(a, lo), min(b, hi)))
     seen = []
-    for (s, e), b in rollout_chunks(data, split, chunk=chunk):
+    for (_, s, e), b in rollout_chunks(data, split, chunk=chunk):
         f = b.frames
         assert f.shape[1] == e - s and f.shape[-1] == data.model_w
         seen.extend(range(s, e))
@@ -146,7 +146,7 @@ def test_chunked_rollout_covers_every_frame_once(data, split, chunk):
 
 
 def test_rollout_never_spans_a_segment_gap(data):
-    for (s, e), _ in rollout_chunks(data, "train", chunk=256):
+    for (_, s, e), _ in rollout_chunks(data, "train", chunk=256):
         assert any(a <= s and e <= b for a, b in SEGMENTS), f"chunk [{s},{e}) spans a gap"
 
 
@@ -170,3 +170,15 @@ def test_dt_defaults_to_ones_when_the_file_is_absent(data):
     garbage -- and the constant must be 1.0, because the gradient balance between the time
     head and the offset head is exactly |dt|."""
     assert torch.allclose(data.gather(torch.tensor([0]), T).dt, torch.ones(1, T))
+
+
+def test_rollout_identifies_the_segment_rather_than_leaving_it_to_be_inferred(data):
+    """MUST-FIRE: adjacent segments share a boundary -- [0,150) then [150,400) -- so the
+    chunk after the break starts exactly where the previous one ended. A caller testing
+    "did the index jump?" would see no jump and carry the hidden state across a recording
+    gap the camera never saw."""
+    got = [(seg, s, e) for (seg, s, e), _ in rollout_chunks(data, "train", chunk=256)]
+    assert [g[0] for g in got] == [0, 1], "both segments must be visited and distinguishable"
+    (seg_a, _, end_a), (seg_b, start_b, _) = got[0], got[1]
+    assert end_a == start_b, "the fixture's segments are adjacent; that is the trap"
+    assert seg_a != seg_b, "and the segment index is the only thing that reveals it"

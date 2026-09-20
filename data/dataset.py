@@ -254,12 +254,17 @@ def rollout_chunks(data, split, chunk=256):
     `tests/test_dataset_windows.py::test_chunked_rollout_covers_every_frame_once` asserts.
     """
     lo, hi = data.manifest["splits"][split]
-    for seg_lo, seg_hi in data.manifest["segments"]:
+    for seg_i, (seg_lo, seg_hi) in enumerate(data.manifest["segments"]):
         seg_lo, seg_hi = max(seg_lo, lo), min(seg_hi, hi)
         if seg_hi <= seg_lo:
             continue
         for s in range(seg_lo, seg_hi, chunk):
             e = min(s + chunk, seg_hi)
             b = data.gather(torch.tensor([s]), e - s)
-            yield (s, e), Batch(center_crop(b.frames, data.model_w),
-                                data.standardise(b.y), b.valid, b.dt)
+            # The segment index is yielded rather than left to be inferred from index
+            # continuity: adjacent segments meet at a shared boundary (…,600] [600,…), so
+            # "did the index jump?" cannot tell a new segment from the next chunk of the
+            # same one, and a caller using that test would carry the hidden state straight
+            # across a recording gap.
+            yield (seg_i, s, e), Batch(center_crop(b.frames, data.model_w),
+                                       data.standardise(b.y), b.valid, b.dt)

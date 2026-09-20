@@ -104,24 +104,39 @@ def test_evaluate_covers_the_split_once_and_writes_its_numbers(trained, processe
     assert "macro skill" in out
 
 
-def test_rollout_does_not_carry_state_across_a_segment_gap(processed):
-    """MUST-FIRE. The recording is cut into segments at timestamp gaps, and a hidden state
-    carried across one would propagate context from before a break the camera never saw.
-    Feed the same frames with the gap present and absent: a recurrent arm must disagree."""
+def test_rollout_resets_the_state_at_every_segment_boundary(processed, monkeypatch):
+    """Tests the RESET MECHANISM, not a downstream proxy for it.
+
+    The first version of this test compared predictions with and without the break and
+    asserted they differ. They differed by 1.2e-7 -- an untrained recurrent state has decayed
+    to something input-driven and carries almost no history, so the proxy was washed out and
+    the test would have passed over a real bug. It did pass over one: the reset fired on
+    "did the frame index jump?", and adjacent segments share a boundary, so it never fired.
+    """
+    import evaluate as ev
     from data.dataset import SteeringData
     from models.interface import build_arm
-    import evaluate as ev
 
-    torch.manual_seed(0)
+    seen = []
     model = build_arm("cfc").eval()
-    a = SteeringData(processed, device="cpu", pin=False)
-    p_split, _, _ = ev.rollout_predictions(model, a, "train", 64, False)
+    real = model.forward
 
-    b = SteeringData(processed, device="cpu", pin=False)
-    b.manifest = dict(b.manifest, segments=[[0, N]])          # pretend it is one segment
-    p_joined, _, _ = ev.rollout_predictions(model, b, "train", 64, False)
+    def spy(frames, dt=None, hx=None):
+        seen.append(hx is None)
+        return real(frames, dt=dt, hx=hx)
 
-    assert p_split.shape == p_joined.shape
-    assert np.abs(p_split - p_joined).max() > 1e-6, (
-        "predictions identical with and without the segment break -- the state is either "
-        "not carried at all, or carried across a gap it must not cross")
+    monkeypatch.setattr(model, "forward", spy)
+    d = SteeringData(processed, device="cpu", pin=False)
+    ev.rollout_predictions(model, d, "train", 64, False)
+
+    chunks = [(seg, s, e) for (seg, s, e), _ in
+              __import__("data.dataset", fromlist=["x"]).rollout_chunks(d, "train", chunk=64)]
+    assert len(seen) == len(chunks)
+    firsts = {seg: i for i, (seg, _, _) in reversed(list(enumerate(chunks)))}
+    for i, (seg, s, e) in enumerate(chunks):
+        expect_reset = (i == firsts[seg])
+        assert seen[i] == expect_reset, (
+            f"chunk {i} (segment {seg}, frames {s}-{e}): hx was "
+            f"{'None' if seen[i] else 'carried'}, expected "
+            f"{'None' if expect_reset else 'carried'}")
+    assert sum(seen) == len(set(seg for seg, _, _ in chunks)) == 2
