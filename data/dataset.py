@@ -234,12 +234,12 @@ def rollout_chunks(data, split, chunk=256):
     `tests/test_dataset_windows.py::test_chunked_rollout_covers_every_frame_once` asserts.
     """
     lo, hi = data.manifest["splits"][split]
-    for a, b in data.manifest["segments"]:
-        a, b = max(a, lo), min(b, hi)
-        if b <= a:
+    for seg_lo, seg_hi in data.manifest["segments"]:
+        seg_lo, seg_hi = max(seg_lo, lo), min(seg_hi, hi)
+        if seg_hi <= seg_lo:
             continue
-        for s in range(a, b, chunk):
-            e = min(s + chunk, b)
+        for s in range(seg_lo, seg_hi, chunk):
+            e = min(s + chunk, seg_hi)
             b = data.gather(torch.tensor([s]), e - s)
             yield (s, e), Batch(center_crop(b.frames, data.model_w),
                                 data.standardise(b.y), b.valid, b.dt)
