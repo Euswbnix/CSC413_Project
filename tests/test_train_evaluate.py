@@ -140,3 +140,35 @@ def test_rollout_resets_the_state_at_every_segment_boundary(processed, monkeypat
             f"{'None' if seen[i] else 'carried'}, expected "
             f"{'None' if expect_reset else 'carried'}")
     assert sum(seen) == len(set(seg for seg, _, _ in chunks)) == 2
+
+
+def test_reporting_tools_close_the_loop(trained, processed):
+    """train -> evaluate -> tables -> figures, so the command that regenerates the README's
+    evidence is exercised rather than assumed. The protocol's rule is that experiments do not
+    start until this path works; a test is the only way that rule means anything."""
+    d, _ = trained
+    run(["evaluate.py", str(d), "--split", "test", "--device", "cpu",
+         "--processed", str(processed), "--chunk", "64"])
+
+    md = run(["scripts/make_tables.py", "--runs", str(d.parent), "--split", "test"])
+    assert "predict-0" in md and "persistence" in md
+    assert "events" in md, "every bin column must carry its independent turn-event count"
+    assert "(1.00x)" in md, "predict-0 must appear as its own reference ratio"
+    assert "cfc" in md
+
+    figs = d.parent / "figs"
+    out = run(["scripts/make_figures.py", "--runs", str(d.parent), "--split", "test",
+               "--out", str(figs)])
+    made = sorted(p.name for p in figs.glob("*.png"))
+    assert made == ["bin_mae.png", "mae_by_window_position.png", "training_curves.png"], made
+    assert all(p.stat().st_size > 5000 for p in figs.glob("*.png")), "a figure came out empty"
+
+
+def test_make_tables_refuses_rather_than_emitting_an_empty_table(tmp_path):
+    """MUST-FIRE: an empty runs/ must be an error, not a table with no rows. A silently
+    empty table pasted into the README reads as a result."""
+    import subprocess as sp
+    empty = tmp_path / "none"; empty.mkdir()
+    r = sp.run([sys.executable, "scripts/make_tables.py", "--runs", str(empty)],
+               cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode != 0 and "run evaluate.py first" in r.stderr
