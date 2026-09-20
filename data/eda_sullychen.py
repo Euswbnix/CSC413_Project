@@ -378,8 +378,12 @@ def image_audit(root, names, a, splits, out, figdir, buffer):
         # interframe change far below the typical moving value, and as a RUN of such frames.
         thr = 0.2 * med
         still = d < thr
-        out(f"interframe mean|Δpixel| p5/p50/p95 : {np.percentile(d,5):.3f} / {med:.3f} /"
-            f" {np.percentile(d,95):.3f}")
+        # Honest label: this compares frames `stride` apart, not adjacent frames, because
+        # only the subsampled set is decoded. At the measured frame rate that is still well
+        # inside a traffic stop, so it detects a stationary car -- but it is NOT the
+        # adjacent-frame difference and must not be reported as one.
+        out(f"mean|Δpixel| between frames {stride} apart, p5/p50/p95 :"
+            f" {np.percentile(d,5):.3f} / {med:.3f} / {np.percentile(d,95):.3f}")
         out(f"likely-stationary threshold       : {thr:.3f}  (0.2 x median)")
         out(f"likely-stationary frames          : {float(still.mean()):.4f} of sampled frames")
         if still.any():
@@ -391,8 +395,8 @@ def image_audit(root, names, a, splits, out, figdir, buffer):
                 if cur:
                     runs[-1] = cur
             runs = [r for r in runs if r]
-            out(f"  stationary run lengths (sampled)  : n={len(runs)}, median {int(np.median(runs))},"
-                f" max {max(runs)}")
+            out(f"  stationary run lengths (in units of {stride} frames) : n={len(runs)},"
+                f" median {int(np.median(runs))}, max {max(runs)}")
         out("  report this PER SPLIT in the README and state whether such frames are"
             " dropped, kept, or reported separately. Part of the near-zero mass is a"
             " STOPPED CAR, which makes predict-0 artificially stronger in the straight bin.")
