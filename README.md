@@ -33,11 +33,30 @@ The model is a PilotNet-style CNN encoder, weight-shared across timesteps, feedi
 readout. The controls are a parameter-matched `nn.LSTM` at the same hidden width, and two
 non-recurrent heads that bracket the recurrent arms from below and at matched capacity.
 
-The question the project is built to answer is not "how accurate can we get" — the target
-distribution is dominated by near-zero angles, so a constant-zero predictor is a strong
-baseline and accuracy alone is uninformative. It is: **does the recurrent pathway carry
-load, and is a continuous-time cell measurably different from a gated one at an identical
-parameter budget on regularly sampled video?**
+The question the project is built to answer is not "how accurate can we get". Accuracy alone
+is uninformative here: about half the frames sit within ±5° of centre, so a constant-zero
+predictor already scores 2.25° MAE on the test straight bin, and the three splits differ
+sharply in how much cornering they contain — a single global number cannot be read.
+
+The question is:
+
+> **Under an identical visual encoder and a near-identical parameter budget, do past frames
+> and the real inter-frame interval improve steering-angle estimation — and does a CfC differ
+> from an LSTM?**
+
+which decomposes into three nested ones, each with its own control:
+
+1. **Does video history help at all?** A single-frame CNN and a two-frame CNN against the
+   recurrent arms. If they tie, nothing downstream is measuring an architecture.
+2. **Does the real `Δt` help?** True intervals against a fixed interval, on the same weights
+   where possible.
+3. **Does the CfC's update mechanism differ?** CfC against a parameter-matched LSTM — and
+   against an LSTM that also receives `Δt`, because if only the CfC sees the time input then
+   a gap cannot be attributed to the update equation.
+
+We do not assume the CfC wins. The cited flight-robustness work reports parity in
+distribution, so overlapping bands are the expected outcome; a tie or a loss with a fair
+control and a clear explanation is a result, and the write-up is built to carry one.
 
 ## Model
 
@@ -81,11 +100,19 @@ enough to state: our gate carries an additional learned time-independent offset 
 that the published equation does not contain; we use the no-backbone variant, so the three
 heads are separate linear maps of `[z_t ; h_{t-1}]` rather than heads on a shared backbone;
 the head the paper calls `f` is unconstrained in code, so the learned inverse time constant
-may be negative and the paper's Theorem 1 does not cover the trained model; and because our
-frames are near-uniformly sampled, `Δt` is nearly constant and the gate reduces to
-`sigmoid(affine(x_t))`. **On regularly sampled video a CfC is therefore not
-"continuous-time versus discrete-time" relative to an LSTM — it is a different gating
-algebra at an identical parameter budget.** `tests/test_cfc_anchors.py` asserts that
+may be negative and the paper's Theorem 1 does not cover the trained model.
+
+The fourth difference is one we expected and the data contradicted. We had assumed this
+footage would be near-uniformly sampled, which would leave `Δt` effectively constant and
+reduce the gate to `sigmoid(affine(x_t))` — a different gating algebra at an identical
+parameter budget, but not "continuous time" in any exercised sense. Measured, the frame
+intervals run **28 / 57 / 101 ms at p1 / p50 / p99**, and they are quantised to integer
+multiples of a 33.00 ms base: 47% of gaps are one interval, 47% are two, 6% are three.
+**`Δt` here is a dropped-frame count, not jitter and not a constant**, so the CfC's
+elapsed-time input carries a physically meaningful quantity and the mechanism is genuinely
+exercised. Because only the CfC would otherwise receive that information, the matched LSTM
+is also run with `Δt` appended as an input feature, so a performance gap cannot be
+attributed to the update equation when it could come from the extra input. `tests/test_cfc_anchors.py` asserts that
 reduction as a closed form, and the Results section reports a frame-dropped variant in
 which `Δt` genuinely varies.
 
@@ -276,9 +303,15 @@ left-hand-traffic world that does not exist in the deployment domain.
 ### Data split
 <!-- RUBRIC: Data Split | 2 | readme | owner: data | unblocked-by: stats.txt (P1) -->
 
-The split is **strictly chronological**, 70/15/15, with a discarded buffer band at each
-boundary, and window sampling refuses to cross a split boundary, a buffer band, or a
-timestamp-gap segment boundary.
+The split is **strictly chronological**, 60/20/20, with a discarded buffer band of 300
+frames at each boundary, and window sampling refuses to cross a split boundary, a buffer
+band, or a timestamp-gap segment boundary.
+
+The ratio is not the conventional one, and the reason is measured. Sharp turns are
+structurally concentrated in the middle of this recording and the final 30% contains almost
+none, so at 70/15/15 the validation split held only **6 independent curve events** —
+checkpoint and hyperparameter selection would have rested on a handful of corners. 60/20/20
+gives validation 17 and test 19, at the cost of 14% of the training frames.
 
 This is the one place where following the community would be a mistake. The widely-copied
 loader for this dataset shuffles before splitting 80/20, with no seed and no test set. At
@@ -353,8 +386,12 @@ bins are assigned by **ground-truth** angle; metrics are computed **per frame** 
 timesteps; and final numbers come from a **stateful contiguous rollout** over each test
 segment, which covers every test frame exactly once with no double counting.
 
-**Predict-0 is unbeatable in the straight bin by construction, and that is expected rather
-than a defect.** We say so before the table rather than after a reader asks. Persistence
+**Predict-0 is a demanding target in the straight bin, and a small margin there is expected
+rather than a defect.** It is not a floor, and we do not claim it is: the constant-zero
+predictor scores 2.25° MAE on the test straight bin, and a model that reads the road can beat
+that — small angles are still predictable. What we expect is that the achievable margin in
+that bin is narrow, because the bin is defined by the target already being near zero. We say
+this before the table rather than after a reader asks. Persistence
 (`ŷ_t = y_{t−1}`) beats us too; it is reported, and then disposed of in one paragraph,
 because the model receives images only and no past ground-truth angles — persistence is not
 a solution to the posed task and is unavailable the moment labels are absent, which is
