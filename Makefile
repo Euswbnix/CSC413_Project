@@ -8,5 +8,6 @@ status:     ; python scripts/readme_status.py
 figures:    ; bash scripts/pull_figures.sh --with-gif
 plots:      ; python scripts/make_figures.py
 tables:     ; python scripts/make_tables.py
+queue:      ; bash scripts/run_queue.sh
 preprocess: ; python data/preprocess.py --data-root data/raw --out data/processed --verify-gif 23000
 download:   ; bash data/download.sh
