@@ -136,8 +136,11 @@ def main():
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--name", default=None)
     ap.add_argument("--max-steps", type=int, default=None, help="smoke test only")
-    ap.add_argument("--min-free-gb", type=float, default=6.0,
-                    help="refuse to start below this much free VRAM; the box is shared")
+    ap.add_argument("--min-free-gb", type=float, default=4.0,
+                    help="refuse to start below this much free VRAM; the box is shared. "
+                         "Measured footprint is ~2.5 GiB per run, so 4.0 is a 1.6x margin. "
+                         "The previous default of 6.0 was a 2.4x margin and refused jobs "
+                         "that would have fitted.")
     ap.add_argument("--device", default=None, choices=("cpu", "cuda"))
     args = ap.parse_args()
 

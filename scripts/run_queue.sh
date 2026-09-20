@@ -46,8 +46,21 @@ for args in "${QUEUE[@]}"; do
   i=$((i + 1))
   name=$(echo "$args" | tr -cd 'A-Za-z0-9.-' | cut -c1-60)
   echo "  [$i/$TOTAL] $args"
-  ( python3 -u train.py $args $EXTRA --runs "$RUNS_DIR" > "$LOG_DIR/${name}.log" 2>&1 \
-    || { echo "  FAILED: $args (see $LOG_DIR/${name}.log)" >&2; exit 1; } ) &
+  (
+    # Retry a VRAM refusal rather than dropping the job. Refusal is a TRANSIENT condition --
+    # the preflight is comparing against whatever the other concurrent runs happen to hold at
+    # that instant, and a slot freeing in the job table does not mean its memory has been
+    # released yet. Dropping the job instead cost a real run: the sixth job of a six-job
+    # batch was refused while five others held 2.5 GiB each, and the batch finished 5/6.
+    for attempt in 1 2 3 4 5 6; do
+      python3 -u train.py $args $EXTRA --runs "$RUNS_DIR" > "$LOG_DIR/${name}.log" 2>&1 && exit 0
+      grep -q "REFUSING TO START" "$LOG_DIR/${name}.log" || {
+        echo "  FAILED: $args (see $LOG_DIR/${name}.log)" >&2; exit 1; }
+      echo "  waiting for VRAM, retry $attempt: $args"
+      sleep 60
+    done
+    echo "  GAVE UP after 6 VRAM retries: $args" >&2; exit 1
+  ) &
   sleep 3            # stagger, so N processes do not all allocate in the same instant
 done
 wait
