@@ -195,7 +195,7 @@ def main():
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), FIXED["clip_grad_norm"])
             opt.step()
-            tot += float(loss); nb += 1
+            tot += loss.item(); nb += 1
             if args.max_steps and step + 1 >= args.max_steps:
                 break
         sched.step()
