@@ -56,11 +56,16 @@ def check_device(allow_cpu):
     cap = torch.cuda.get_device_capability(0)
     arch = f"sm_{cap[0]}{cap[1]}"
     print(f"  {name}  capability {arch}")
-    assert arch in torch.cuda.get_arch_list(), (
-        f"{arch} is NOT in this torch build's arch list {torch.cuda.get_arch_list()}. "
-        "The card is detected but no kernels exist for it -- update the driver or install "
-        "from the cu128 index (see requirements.txt)."
-    )
+    # NOT a hard assert. Being in the arch list is SUFFICIENT, not necessary: an RTX 4080
+    # (sm_89) runs fine under a build listing sm_86/sm_90 by JIT-compiling from PTX, and an
+    # earlier version of this gate rejected a perfectly good machine for it. The necessary
+    # condition is the real on-device backward pass below -- which this file's own docstring
+    # already called the only check that catches a detected-but-unusable GPU. Report the
+    # mismatch, because it means first-call JIT latency and is worth knowing; do not refuse.
+    if arch not in torch.cuda.get_arch_list():
+        print(f"  NOTE: {arch} is not in this build's arch list {torch.cuda.get_arch_list()};"
+              " kernels will be JIT-compiled from PTX. Expect a slow first call. The backward"
+              " check below is what decides whether this GPU is usable.")
 
     # TF32 OFF, explicitly. PyTorch's Blackwell defaults are ASYMMETRIC -- on for cuDNN
     # convolutions, off for cuBLAS matmuls -- so the PilotNet stack would run at a 10-bit
