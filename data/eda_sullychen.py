@@ -265,7 +265,7 @@ def gate_g1(gate, out):
     ok = n_test >= 300 and ev_test >= 10
     out(f"test curve bin [15,inf): {n_test} frames across {ev_test} independent turn events")
     if ok:
-        out("PASS -- keep the four bins as specified.")
+        out("PASS -- the merged curve bin has adequate independent-event support.")
     else:
         out("FAIL -- do BOTH of the following before writing preprocess.py:")
         out("  1. Merge [15,40) and [40,inf) and justify the merge in Quantitative Measures;")

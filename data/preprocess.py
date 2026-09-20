@@ -77,7 +77,9 @@ def main():
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("data/processed"))
     ap.add_argument("--verify-gif", type=int, default=None, metavar="START_FRAME",
                     help="render 10 s from this frame with the true angle overlaid. The ONLY "
-                         "check that catches a uniform frame/label off-by-one.")
+                         "check that catches a uniform frame/label off-by-one. PICK A CURVY "
+                         "STRETCH: on straight road the needle sits at zero and the check "
+                         "proves nothing. Use the EDA's per-slice table to find one.")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
