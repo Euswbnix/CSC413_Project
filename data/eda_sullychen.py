@@ -32,7 +32,14 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-TS_FORMAT = "%Y-%m-%d %H:%M:%S:%f"   # the separator before milliseconds is a COLON
+# The millisecond field is LEFT-padded and strptime's %f is NOT: %f pads on the RIGHT to
+# microseconds, so ":11" becomes 110 ms instead of 011 ms. On the 2018 release 6,343 of
+# 63,825 lines (9.9%) have a short ms field, and parsing them with %f yields 3,574
+# apparently-backwards timestamps, a p1 dt of -750.8 ms, and 1,822 phantom recording gaps
+# that would have split the recording into 1,823 segments -- many shorter than one training
+# window, discarding most of the dataset. Parsed correctly there are ZERO of each and the
+# whole recording is one contiguous segment.
+TS_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 BIN_EDGES = [0.0, 5.0, 15.0, 40.0, np.inf]
 BIN_NAMES = ["straight [0,5)", "gentle [5,15)", "medium [15,40)", "sharp [40,inf)"]
 THRESHOLDS = [1, 2, 5, 15, 40, 100]   # emits the fraction above 40, which BIN_EDGES needs
@@ -43,6 +50,13 @@ EVENT_MERGE_GAP = 15                  # runs closer than this are one turn event
 
 
 # ------------------------------------------------------------------------------ parsing
+
+def parse_timestamp(s):
+    """`YYYY-MM-DD HH:MM:SS:mmm` where mmm is LEFT-padded milliseconds. See TS_FORMAT."""
+    date, clock = s.split(" ")
+    hh, mm, ss, ms = clock.split(":")
+    return datetime.strptime(f"{date} {hh}:{mm}:{ss}.{ms.zfill(3)}", TS_FORMAT)
+
 
 def parse_data_txt(path):
     """Returns (filenames, angles_deg, timestamps_or_None), in FILE ORDER.
@@ -59,7 +73,7 @@ def parse_data_txt(path):
             fname, rest = line.split(None, 1)
             if "," in rest:
                 angle_s, ts_s = rest.split(",", 1)
-                stamps.append(datetime.strptime(ts_s.strip(), TS_FORMAT))
+                stamps.append(parse_timestamp(ts_s.strip()))
             else:
                 angle_s = rest
                 stamps.append(None)
@@ -111,9 +125,17 @@ def timing_stats(stamps, out):
     bounds = [0, *(gaps + 1).tolist(), len(t)]
     segs = [(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
     out(f"contiguous segments      : {len(segs)}  (shortest {min(b-a for a,b in segs)} frames)")
-    out(f"p99/p50 Δt ratio         : {np.percentile(dt,99)/med:.3f}"
-        "   (near 1.0 => sampling is effectively uniform => do NOT run a"
-        " uniform-vs-true-Δt ablation; it is null by construction)")
+    ratio = float(np.percentile(dt, 99) / med)
+    out(f"p99/p50 Δt ratio         : {ratio:.3f}")
+    if ratio < 1.10:
+        out("  => sampling is effectively uniform. Do NOT run a uniform-vs-true-Δt ablation:"
+            " it is null by construction. Say so in the Introduction instead -- the CfC is"
+            " then exercised as a closed-form gated cell, not as an irregular-Δt integrator.")
+    else:
+        out("  => sampling is genuinely IRREGULAR. The CfC's elapsed-time input is doing real"
+            " work here rather than receiving a constant, so the uniform-vs-true-Δt ablation"
+            " is a real experiment and the continuous-time story is exercised on measured"
+            " irregularity rather than on synthetic frame dropping.")
     return med, segs
 
 
