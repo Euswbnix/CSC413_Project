@@ -200,9 +200,12 @@ def main():
             out.append(im)
         gif = args.out / f"verify_{lo}.gif"
         out[0].save(gif, save_all=True, append_images=out[1:], duration=66, loop=0)
-        print(f"\nwrote {gif}. WATCH IT. The red needle must lean the same way the road "
-              f"curves.\nThis is the only check in the project that catches a uniform "
-              f"frame/label off-by-one; every EDA statistic passes such a misalignment.")
+        print(f"\nwrote {gif}. WATCH IT: the blue bar must grow to the RIGHT when the road "
+              f"bends right,\nand its LENGTH against the 5/15/40 ticks is the magnitude the "
+              f"metric sees. Red = a masked\nlabel dropout. Pick a curvy stretch or the bar "
+              f"sits near centre and proves nothing.\nThis is the only check in the project "
+              f"that catches a uniform frame/label off-by-one;\nevery EDA statistic passes "
+              f"such a misalignment.")
 
 
 if __name__ == "__main__":
