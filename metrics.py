@@ -107,12 +107,29 @@ def macro_skill(pred, true, valid=None):
     quarter of the scalar to two corners.
     """
     rows = per_bin(pred, true, valid)
-    ratios = [r["mae_model"] / r["mae_predict0"]
-              for name, r in rows.items()
-              if name in BIN_NAMES and r["n_frames"] > 0 and r["mae_predict0"] > 0]
-    if not ratios:
+    use = [r for name, r in rows.items()
+           if name in BIN_NAMES and r["n_frames"] > 0 and r["mae_predict0"] > 0]
+    if not use:
         return float("nan")
-    return float(1.0 - np.mean(ratios))
+    # AVERAGE THE MAEs, THEN TAKE THE RATIO -- not the mean of per-bin ratios.
+    # Averaging ratios looks equivalent and is not: predict-0's MAE is 2.33 deg in the
+    # straight bin and 38 deg in the curve bin, so a per-bin ratio divides by a denominator
+    # sixteen times smaller on the easy bin. One degree of straight-bin error would then cost
+    # sixteen times the score of one degree of curve-bin error, and the headline scalar would
+    # be dominated by the easiest bin -- the exact opposite of why the project bins at all.
+    # Measured: under the ratio-mean, models that beat predict-0 on curves (28.7 vs 38.0)
+    # still scored -0.46 to -0.94 overall.
+    return float(1.0 - np.mean([r["mae_model"] for r in use])
+                 / np.mean([r["mae_predict0"] for r in use]))
+
+
+def macro_mae(pred, true, valid=None, which="mae_model"):
+    """Mean of the per-bin MAEs, in degrees. The interpretable form of the same quantity:
+    `macro_skill = 1 - macro_mae(model) / macro_mae(predict-0)`. Report both -- the degrees
+    are readable and the skill is comparable across splits."""
+    rows = per_bin(pred, true, valid)
+    vals = [r[which] for name, r in rows.items() if name in BIN_NAMES and r["n_frames"] > 0]
+    return float(np.mean(vals)) if vals else float("nan")
 
 
 def pearson_r(pred, true, valid=None):
@@ -137,6 +154,8 @@ def false_alarm_rate(pred, true, valid=None):
 def summary(pred, true, valid=None):
     return {
         "macro_skill": macro_skill(pred, true, valid),
+        "macro_mae": macro_mae(pred, true, valid),
+        "macro_mae_predict0": macro_mae(pred, true, valid, which="mae_predict0"),
         "global_mae": mae(pred, true, np.ones_like(np.asarray(true), dtype=bool)
                           if valid is None else np.asarray(valid, dtype=bool)),
         "pearson_r": pearson_r(pred, true, valid),

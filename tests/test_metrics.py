@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from metrics import (BIN_NAMES, bin_masks, count_turn_events, false_alarm_rate,
+                     macro_mae,
                      mae_by_window_position, macro_skill, per_bin, persistence, pearson_r,
                      summary)
 
@@ -116,8 +117,10 @@ def test_the_diagnostic_row_is_a_subset_view_not_a_fourth_bin():
     rows = per_bin(pred, true)
     assert rows["curve [15,inf)"]["n_frames"] == 304, "sharp frames must stay in the curve bin"
     assert rows["(diagnostic) >=40"]["n_frames"] == 4
-    ratio = rows["curve [15,inf)"]["mae_model"] / rows["curve [15,inf)"]["mae_predict0"]
-    assert macro_skill(pred, true) == pytest.approx(1.0 - (0.0 + 0.0 + ratio) / 3)
+    num = np.mean([rows[b]["mae_model"] for b in BIN_NAMES])
+    den = np.mean([rows[b]["mae_predict0"] for b in BIN_NAMES])
+    assert macro_skill(pred, true) == pytest.approx(1.0 - num / den)
+    assert macro_mae(pred, true) == pytest.approx(num)
 
 
 def test_a_catastrophe_confined_to_the_diagnostic_subset_still_costs_score():
@@ -181,3 +184,25 @@ def test_summary_is_serialisable_and_complete():
     s = summary(true + rng.normal(0, 5, 500), true)
     json.dumps(s)
     assert set(s) >= {"macro_skill", "global_mae", "pearson_r", "false_alarm_rate", "bins"}
+
+
+def test_the_scalar_is_not_dominated_by_the_easiest_bin():
+    """MUST-FIRE, and it did: the first version averaged per-bin RATIOS, so predict-0's tiny
+    straight-bin denominator (2.33 deg against 38 in the curve bin) made one degree of
+    straight-bin error cost sixteen times one degree of curve-bin error. Models that genuinely
+    beat predict-0 on curves scored -0.46 to -0.94 overall.
+
+    A model that is better than predict-0 where the errors are large must score POSITIVE,
+    even while losing on the easy bin.
+    """
+    true = np.concatenate([np.full(2000, 2.0), np.full(600, 9.0), np.full(400, 38.0)])
+    pred = np.concatenate([np.full(2000, 6.0),      # worse than predict-0 on straight
+                           np.full(600, 9.0),       # exact
+                           np.full(400, 36.0)])     # nearly exact where it is hard
+    rows = per_bin(pred, true)
+    assert rows["straight [0,5)"]["mae_model"] > rows["straight [0,5)"]["mae_predict0"]
+    assert rows["curve [15,inf)"]["mae_model"] < rows["curve [15,inf)"]["mae_predict0"]
+    assert macro_skill(pred, true) > 0.5
+
+    ratio_mean = 1.0 - np.mean([rows[b]["mae_model"] / rows[b]["mae_predict0"] for b in BIN_NAMES])
+    assert ratio_mean < 0, "the old aggregation should score this model negative"
