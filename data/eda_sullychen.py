@@ -533,28 +533,40 @@ def image_audit(root, names, a, splits, out, figdir, buffer):
     # stripe PARALLEL to the diagonal at a fixed offset -- a secondary peak in the mean
     # similarity as a function of |i-j|. Scene-type similarity instead makes broad blocks,
     # which raise the whole profile without putting a bump anywhere.
-    # Cap the offset range at n//2. Beyond that each diagonal holds only a handful of
-    # elements, its mean is noise, and a polynomial trend extrapolates badly into the corner
-    # -- which produced a confident 8-sigma "stripe" at an offset equal to the entire
-    # recording length, i.e. an edge artifact, on the first version of this check.
-    offs = np.arange(band + 1, max(band + 2, n // 2))
+    # The exclusion band comes from the ANGLE decorrelation lag, and images decorrelate far
+    # more slowly than steering does -- the car is still on similar-looking road long after
+    # the wheel has moved on. Measure the IMAGE decorrelation length from the profile itself
+    # and search only well beyond it. Without that the detector peaks immediately outside the
+    # band and calls the tail of the image autocorrelation a retrace; it did, at 7.7 sigma.
+    # (An earlier version also peaked at an offset equal to the whole recording, where each
+    # diagonal holds ~20 elements -- hence the n//2 cap and the printed pair count.)
+    offs = np.arange(1, max(3, n // 2))
     prof = np.array([float(np.mean(np.diagonal(S, d))) for d in offs])
-    if len(prof) > 20:
-        basefit = np.poly1d(np.polyfit(offs, prof, 3))(offs)      # the slow scenery trend
-        resid = prof - basefit
+    tail = float(np.median(prof[len(prof) // 2:]))
+    drop = prof[0] - tail
+    idec = int(offs[np.argmax(prof < tail + 0.10 * drop)]) if drop > 0 else band
+    out(f"  image decorrelation length : {idec * stride} raw frames (the angle's is"
+        f" {buffer}; images decorrelate {idec * stride / max(buffer, 1):.1f}x slower)")
+    lo = max(3 * idec, band + 1)
+    sel = offs > lo
+    if int(sel.sum()) > 20:
+        o2, p2 = offs[sel], prof[sel]
+        resid = p2 - np.poly1d(np.polyfit(o2, p2, 3))(o2)
         pk = int(np.argmax(resid))
-        out(f"  offset profile: mean similarity vs |i-j|, detrended, offsets up to n/2")
-        out(f"    strongest secondary peak   : +{resid[pk]:.3f} at offset"
-            f" {int(offs[pk]) * stride} raw frames ({n - int(offs[pk])} frame pairs averaged)")
-        out(f"    profile std around the trend: {float(resid.std()):.3f}")
-        z = resid[pk] / (resid.std() + 1e-9)
+        z = float(resid[pk] / (resid.std() + 1e-9))
+        out(f"  offset profile, detrended, searched beyond {lo * stride} raw frames:")
+        out(f"    strongest secondary peak : +{resid[pk]:.3f} at offset {int(o2[pk]) * stride}"
+            f" raw frames ({n - int(o2[pk])} pairs averaged), {z:.1f} sigma")
         if z > 5:
-            out(f"    => {z:.1f} sigma. A STRIPE is present: the route appears to retrace."
-                " Report the headline table twice, full test set and leak-free subset.")
+            out("    => a STRIPE is present: the route appears to retrace. Report the headline"
+                " table twice, full test set and leak-free subset.")
         else:
-            out(f"    => only {z:.1f} sigma above the scenery trend: no stripe, so no evidence"
-                " the route retraces. The high pair count above is block-structured"
-                " scene similarity, not revisits.")
+            out("    => no stripe. The high pair count above is block-structured scene"
+                " similarity, not revisits. The test-to-train nearest-neighbour figures are"
+                " the primary evidence here and they agree.")
+    else:
+        out("  too few usable offsets to test for a stripe; rely on the nearest-neighbour"
+            " figures above.")
     try:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
