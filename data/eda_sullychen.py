@@ -40,8 +40,18 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 # window, discarding most of the dataset. Parsed correctly there are ZERO of each and the
 # whole recording is one contiguous segment.
 TS_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
-BIN_EDGES = [0.0, 5.0, 15.0, 40.0, np.inf]
-BIN_NAMES = ["straight [0,5)", "gentle [5,15)", "medium [15,40)", "sharp [40,inf)"]
+# [DECISION 2026-09-19, forced by the measurement -- do not revert for tidiness]
+# The primary bins merge what was [15,40) and [40,inf). Gate G1 on the 2018 release showed
+# that NO chronological split can support a separate sharp bin: |angle| >= 40 turns are
+# structurally concentrated in the middle of the recording and the final 30% contains almost
+# none, so every candidate cut leaves the test split 2-4 independent turn events. 146 frames
+# looks adequate; 2 events is not a measurement. Merged, the curve bin holds 19 independent
+# test events, clearing the >=10 requirement.
+# The sharp bin is NOT discarded: split_bin_table reports it as a separate, clearly labelled
+# UNDER-POWERED DIAGNOSTIC row with its event count, never as a headline number.
+BIN_EDGES = [0.0, 5.0, 15.0, np.inf]
+BIN_NAMES = ["straight [0,5)", "gentle [5,15)", "curve [15,inf)"]
+DIAGNOSTIC_EDGE = 40.0
 THRESHOLDS = [1, 2, 5, 15, 40, 100]   # emits the fraction above 40, which BIN_EDGES needs
 ACF_LAGS = [1, 5, 15, 30, 90, 300, 900, 1800]
 # [DECISION 2026-09-19] 60/20/20, not 70/15/15. Still strictly chronological with the
