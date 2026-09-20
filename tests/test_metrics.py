@@ -100,13 +100,34 @@ def test_a_shrunken_predictor_cannot_win():
     assert macro_skill(true, true) == pytest.approx(1.0)
 
 
-def test_macro_skill_ignores_the_diagnostic_bin():
-    """Two independent turn events must not control a sixth of the headline scalar."""
+def test_the_diagnostic_row_is_a_subset_view_not_a_fourth_bin():
+    """Sharp frames are scored INSIDE the curve bin -- they are real data with real errors.
+    What is withheld is a headline number of their own. So the mean must run over exactly
+    three terms, and the >=40 row must not add a fourth.
+
+    MUST-FIRE both ways: the hand computation below pins the divisor at 3. If the diagnostic
+    row ever became a fourth term the value would move, and if sharp frames were dropped from
+    the curve bin instead the ratio would.
+    """
     true = np.concatenate([np.full(300, 1.0), np.full(300, 8.0), np.full(300, 20.0),
                            np.full(4, 200.0)])
     pred = true.copy()
-    pred[-4:] = 0.0                     # catastrophic, but only in the diagnostic bin
-    assert macro_skill(pred, true) > 0.99
+    pred[-4:] = 0.0
+    rows = per_bin(pred, true)
+    assert rows["curve [15,inf)"]["n_frames"] == 304, "sharp frames must stay in the curve bin"
+    assert rows["(diagnostic) >=40"]["n_frames"] == 4
+    ratio = rows["curve [15,inf)"]["mae_model"] / rows["curve [15,inf)"]["mae_predict0"]
+    assert macro_skill(pred, true) == pytest.approx(1.0 - (0.0 + 0.0 + ratio) / 3)
+
+
+def test_a_catastrophe_confined_to_the_diagnostic_subset_still_costs_score():
+    """MUST-FIRE: the withheld headline number must not become a free pass. Blowing up on
+    the sharp frames has to show, because they are inside the curve bin."""
+    true = np.concatenate([np.full(300, 20.0), np.full(60, 200.0)])
+    good = macro_skill(true.copy(), true)
+    bad = true.copy(); bad[-60:] = 0.0
+    assert good == pytest.approx(1.0)
+    assert macro_skill(bad, true) < 0.8
 
 
 # -------------------------------------------------------------- other quantities ----

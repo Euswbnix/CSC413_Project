@@ -18,6 +18,13 @@ Three protocol decisions are baked in rather than left to the caller:
 An independent TURN EVENT is a maximal run of in-bin frames, merging runs separated by fewer
 than 15 frames. It travels with every count because 200 correlated frames from one corner are
 one sample, not 200.
+
+The bins are [0,5), [5,15) and [15,inf). There is no separate sharp bin: gate G1 measured the
+recording and no chronological split can support one, because turns above 40 deg are
+concentrated in the middle of the recording and the final 30% holds almost none, leaving the
+test split 2-4 independent events under every candidate cut. `>=40` is therefore reported as
+a SUBSET VIEW of the curve bin -- scored inside it, listed separately for diagnosis, never a
+headline number of its own.
 """
 
 import numpy as np
@@ -90,9 +97,14 @@ def macro_skill(pred, true, valid=None):
 
     Predict-0 scores exactly 0 by construction and the score cannot be won by shrinking
     predictions toward the mean, which is why this is the headline scalar and the quantity
-    checkpoint selection maximises. The diagnostic >=40 bin is excluded: with 2 independent
-    turn events in the test split it is not a measurement, and letting it into the headline
-    scalar would hand a sixth of that scalar to two corners.
+    checkpoint selection maximises.
+
+    The mean runs over the THREE primary bins only. The `>=40` row is a SUBSET VIEW of the
+    curve bin, not a fourth bin: those frames are real data with real errors and they are
+    scored inside `curve [15,inf)` like any other. What is withheld from them is a headline
+    number of their own -- with 2 independent turn events in the test split, a standalone
+    sharp-bin MAE is not a measurement, and averaging it in as a fourth term would hand a
+    quarter of the scalar to two corners.
     """
     rows = per_bin(pred, true, valid)
     ratios = [r["mae_model"] / r["mae_predict0"]
