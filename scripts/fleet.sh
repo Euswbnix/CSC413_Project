@@ -95,6 +95,21 @@ status)
       printf "  %-46s %s\n" "$h" "${r:-<unreachable>}" ) &
   done; wait ;;
 
+evaluate)
+  # Every reported number comes from the stateful rollout, and a run without one contributes
+  # nothing to the tables. Evaluation is inference-only and each host already holds both its
+  # own runs and the data locally, so it parallelises for free -- and it has to happen while
+  # the fleet is still reachable, because the checkpoints live on local scratch.
+  SPLIT="${1:-test}"
+  for h in $(hosts); do
+    ( ssh -o BatchMode=yes "$h" "cd ~/csc413 && for d in $RUNS_LOCAL/*/; do
+          [ -f \"\$d/final_metrics_$SPLIT.json\" ] && continue
+          [ -f \"\$d/checkpoints/best.pt\" ] || continue
+          python3 evaluate.py \"\$d\" --split $SPLIT --processed $DATA_LOCAL >/dev/null 2>&1 \
+            || echo \"  FAILED \$(basename \$d)\"
+        done; echo \"  $h: \$(ls $RUNS_LOCAL/*/final_metrics_$SPLIT.json 2>/dev/null | wc -l) evaluated\"" ) &
+  done; wait ;;
+
 collect)
   mkdir -p "$RUNS_HOME"
   for h in $(hosts); do
