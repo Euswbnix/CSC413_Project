@@ -1,0 +1,16 @@
+# Never commit data (PROJECT.md section 10). Includes frames pasted into figures/.
+data/raw/
+data/processed/
+*.npy
+*.memmap
+*.lmdb
+*.jpg
+*.jpeg
+*.png
+!figures/.gitkeep
+runs/*/checkpoints/
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+.DS_Store

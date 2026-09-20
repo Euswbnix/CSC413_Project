@@ -1,0 +1,9 @@
+.PHONY: test test-all smoke eda params
+test:       ; pytest -q -m "not slow"
+test-all:   ; pytest -q
+smoke:      ; python scripts/smoke_test.py
+params:     ; python scripts/param_table.py
+eda:        ; python data/eda_sullychen.py --data-root data/raw
+status:     ; python scripts/readme_status.py
+preprocess: ; python data/preprocess.py --data-root data/raw --out data/processed --verify-gif 1200
+download:   ; bash data/download.sh

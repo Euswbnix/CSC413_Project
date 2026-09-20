@@ -1,0 +1,10 @@
+# Pinned. Record the exact versions that pass scripts/smoke_test.py on your machine.
+# On RTX 5090 / Blackwell (sm_120): read `nvidia-smi` FIRST.
+#   driver >= 580.65.06  ->  the default PyPI Linux wheel already ships sm_120 kernels
+#   driver 570.x-579.x   ->  update the driver, or install from the cu128 index:
+#                            pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+# A too-old driver installs cleanly, reports the card correctly, and then fails every
+# kernel -- scripts/smoke_test.py asserts an on-device backward pass to catch that.
+torch==2.8.0
+numpy==2.0.2
+matplotlib==3.9.2

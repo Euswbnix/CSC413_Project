@@ -1,0 +1,5 @@
+-r requirements.txt
+# Test-only. The model NEVER imports this -- tests/test_hygiene.py enforces that by grep.
+# Used solely as a numerical oracle for tests/test_cfc_oracle.py.
+ncps==1.0.1
+pytest==8.3.3
