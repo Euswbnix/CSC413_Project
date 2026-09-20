@@ -140,6 +140,31 @@ def timing_stats(stamps, out):
     bounds = [0, *(gaps + 1).tolist(), len(t)]
     segs = [(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
     out(f"contiguous segments      : {len(segs)}  (shortest {min(b-a for a,b in segs)} frames)")
+    # Is dt quantised to multiples of a base capture interval? On the 2018 release it is,
+    # and that reframes the whole timing story: the camera ran at ~30 Hz (which is where the
+    # widely-quoted "~30 fps" comes from, and it is correct), but roughly half the frames are
+    # missing from the saved sequence, giving an effective 17.5 fps. So dt is not jitter --
+    # it is a DROPPED-FRAME COUNT, taking essentially three values. That is a far stronger
+    # thing to write than "sampling is irregular", and it means the CfC's elapsed-time input
+    # carries a physically meaningful quantity rather than noise.
+    best = min(((b, float(np.median(np.abs(dt / b - np.round(dt / b)))))
+                for b in np.arange(24.0, 36.01, 0.05)), key=lambda x: x[1])
+    base = best[0]
+    kr = np.round(dt / base)
+    within = float((np.abs(dt - kr * base) < 0.005).mean())
+    out(f"base capture interval    : {base*1000:.2f} ms ({1/base:.1f} Hz), fitted")
+    out(f"  gaps within 5 ms of an exact multiple : {100*within:.1f}%")
+    for k in (1, 2, 3):
+        m = kr == k
+        if m.sum():
+            out(f"  k={k} ({'no drop' if k == 1 else f'{k-1} frame(s) dropped'})"
+                f" : {int(m.sum()):>6} ({100*m.mean():>5.2f}%)  mean {dt[m].mean()*1000:.1f} ms")
+    rare = int((kr > 3).sum())
+    if rare:
+        out(f"  k>3 (longer dropouts)        : {rare}")
+    out(f"  => {100*float((kr > 1).mean()):.1f}% of inter-frame gaps span at least one"
+        " dropped frame")
+
     ratio = float(np.percentile(dt, 99) / med)
     out(f"p99/p50 Δt ratio         : {ratio:.3f}")
     if ratio < 1.10:
@@ -147,10 +172,12 @@ def timing_stats(stamps, out):
             " it is null by construction. Say so in the Introduction instead -- the CfC is"
             " then exercised as a closed-form gated cell, not as an irregular-Δt integrator.")
     else:
-        out("  => sampling is genuinely IRREGULAR. The CfC's elapsed-time input is doing real"
-            " work here rather than receiving a constant, so the uniform-vs-true-Δt ablation"
-            " is a real experiment and the continuous-time story is exercised on measured"
-            " irregularity rather than on synthetic frame dropping.")
+        out("  => sampling is genuinely IRREGULAR, and per the quantisation above the"
+            " irregularity is DROPPED FRAMES rather than jitter. The CfC's elapsed-time input"
+            " therefore carries a physically meaningful quantity -- how many capture intervals"
+            " this step spans -- rather than noise or a constant. The uniform-vs-true-Δt"
+            " ablation is a real experiment, and the continuous-time story is exercised on"
+            " measured irregularity rather than on synthetic frame dropping.")
     return med, segs
 
 
