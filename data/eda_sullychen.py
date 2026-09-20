@@ -524,10 +524,40 @@ def image_audit(root, names, a, splits, out, figdir, buffer):
             f" / {len(te)} ({100*float((best > thr).mean()):.2f}%)")
         out("  If that fraction is non-trivial the buffer did not prevent leakage and the"
             " headline table must be reported twice: full test set, and leak-free subset.")
+    # The max and the >0.9 pair count are NOT the evidence, and read alone they mislead: on a
+    # coarse 32x32 grey descriptor two unrelated stretches of similar scenery correlate above
+    # 0.9 easily, which is why the pair count comes out in the tens of thousands on data that
+    # never retraces. What distinguishes a revisit is STRUCTURE. A retrace makes lap 2's
+    # consecutive frames match lap 1's consecutive frames IN ORDER, so it appears as a bright
+    # stripe PARALLEL to the diagonal at a fixed offset -- a secondary peak in the mean
+    # similarity as a function of |i-j|. Scene-type similarity instead makes broad blocks,
+    # which raise the whole profile without putting a bump anywhere.
+    offs = np.arange(band + 1, n)
+    prof = np.array([float(np.mean(np.diagonal(S, d))) for d in offs])
+    if len(prof) > 20:
+        basefit = np.poly1d(np.polyfit(offs, prof, 3))(offs)      # the slow scenery trend
+        resid = prof - basefit
+        pk = int(np.argmax(resid))
+        out(f"  offset profile: mean similarity vs |i-j|, detrended")
+        out(f"    strongest secondary peak   : +{resid[pk]:.3f} at offset"
+            f" {int(offs[pk]) * stride} raw frames")
+        out(f"    profile std around the trend: {float(resid.std()):.3f}")
+        z = resid[pk] / (resid.std() + 1e-9)
+        if z > 5:
+            out(f"    => {z:.1f} sigma. A STRIPE is present: the route appears to retrace."
+                " Report the headline table twice, full test set and leak-free subset.")
+        else:
+            out(f"    => only {z:.1f} sigma above the scenery trend: no stripe, so no evidence"
+                " the route retraces. The high pair count above is block-structured"
+                " scene similarity, not revisits.")
     try:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(6, 6))
+        fig, (ax, ax2) = plt.subplots(1, 2, figsize=(11, 5.2),
+                                      gridspec_kw={"width_ratios": [1, 0.85]})
+        ax2.plot(offs * stride, prof, lw=0.7)
+        ax2.set_xlabel("offset |i-j| (raw frames)"); ax2.set_ylabel("mean similarity")
+        ax2.set_title("offset profile (a retrace = a bump)")
         ax.imshow(S, cmap="magma", vmin=0, vmax=1)
         ax.set_title("frame self-similarity (subsampled)")
         fig.tight_layout(); fig.savefig(figdir / "revisit_similarity.png", dpi=150); plt.close(fig)
