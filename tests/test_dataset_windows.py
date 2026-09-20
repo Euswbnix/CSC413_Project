@@ -86,7 +86,7 @@ def test_windows_per_epoch_is_the_stride_equivalent(data):
 def test_gather_is_frame_aligned(data):
     """frames[i,0,0,0] == i % 256, so this fails on an off-by-one in the index arithmetic."""
     starts = torch.tensor([0, 37, 150])
-    f, y = data.gather(starts, T)
+    f, y, v = data.gather(starts, T)
     for b, s in enumerate(starts.tolist()):
         got = (f[b, :, 0, 0, 0] * 255).round().long()
         assert got.tolist() == [(s + t) % 256 for t in range(T)]
@@ -99,14 +99,14 @@ def test_standardise_round_trips(data):
 
 
 def test_validation_batches_are_deterministic_and_centre_cropped(data):
-    a = [tuple(x.shape) for x, _ in window_batches(data, "val", T, 8)]
-    b = [tuple(x.shape) for x, _ in window_batches(data, "val", T, 8)]
+    a = [tuple(x.shape) for x, _, _ in window_batches(data, "val", T, 8)]
+    b = [tuple(x.shape) for x, _, _ in window_batches(data, "val", T, 8)]
     assert a == b and all(s[-1] == data.model_w for s in a)
 
 
 def test_training_batches_are_reproducible_given_the_epoch_seed(data):
     def run(seed):
-        return [(f.clone(), y.clone()) for f, y in
+        return [(f.clone(), y.clone()) for f, y, _ in
                 train_batches(data, T, 4, k_deg_per_px=0.1, epoch_seed=seed)][:3]
     for (f1, y1), (f2, y2) in zip(run(7), run(7)):
         torch.testing.assert_close(f1, f2, rtol=0, atol=0)
@@ -120,7 +120,7 @@ def test_training_batches_are_augmented_and_validation_batches_are_not(data):
     vf = next(iter(window_batches(data, "train", T, 4)))[0]
     assert tf.shape[-1] == vf.shape[-1] == data.model_w
     # validation is the exact centre crop; training is not (some window is shifted)
-    raw, _ = data.gather(data.window_starts("train", T)[:4], T)
+    raw, _, _ = data.gather(data.window_starts("train", T)[:4], T)
     torch.testing.assert_close(vf, center_crop(raw, data.model_w), rtol=0, atol=0)
 
 
@@ -137,7 +137,7 @@ def test_chunked_rollout_covers_every_frame_once(data, split, chunk):
     for a, b in SEGMENTS:
         expected |= set(range(max(a, lo), min(b, hi)))
     seen = []
-    for (s, e), f, y in rollout_chunks(data, split, chunk=chunk):
+    for (s, e), f, y, v in rollout_chunks(data, split, chunk=chunk):
         assert f.shape[1] == e - s and f.shape[-1] == data.model_w
         seen.extend(range(s, e))
     assert sorted(seen) == sorted(expected)
@@ -145,5 +145,17 @@ def test_chunked_rollout_covers_every_frame_once(data, split, chunk):
 
 
 def test_rollout_never_spans_a_segment_gap(data):
-    for (s, e), _, _ in rollout_chunks(data, "train", chunk=256):
+    for (s, e), _, _, _ in rollout_chunks(data, "train", chunk=256):
         assert any(a <= s and e <= b for a, b in SEGMENTS), f"chunk [{s},{e}) spans a gap"
+
+
+def test_label_validity_is_part_of_every_batch(data):
+    """Masking the loss is not optional, so the mask travels with the batch rather than
+    sitting in an attribute someone has to remember to consult."""
+    _, _, v = data.gather(torch.tensor([0, 50]), T)
+    assert v.shape == (2, T) and v.dtype == torch.bool
+    assert v.all(), "the fabricated fixture has no dropouts"
+    for batch in (next(iter(train_batches(data, T, 4, k_deg_per_px=0.1, epoch_seed=0))),
+                  next(iter(window_batches(data, "val", T, 4)))):
+        assert len(batch) == 3 and batch[2].dtype == torch.bool
+    assert len(next(iter(rollout_chunks(data, "test", chunk=64)))) == 4

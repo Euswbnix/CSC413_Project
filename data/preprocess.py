@@ -42,7 +42,7 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from data.eda_sullychen import (parse_data_txt, chronological_splits, ACF_LAGS,  # noqa: E402
-                                MIN_BUFFER, SPLIT_FRACTIONS)
+                                MIN_BUFFER, SPLIT_FRACTIONS, label_dropouts)
 
 SRC_CROP_ROWS = 150          # bottom rows of the 455x256 source, per the reference loader
 STORE_H, STORE_W = 66, 240
@@ -116,7 +116,15 @@ def main():
     tr_lo, tr_hi = splits["train"]
 
     # TRAIN-SPLIT ONLY. Computing these over all frames leaks test statistics into training.
-    train_angles = angles[tr_lo:tr_hi]
+    # Label dropouts: exactly 0.0 beside a large value, i.e. a logging default rather than a
+    # centred wheel. Excluded from the normalisation statistics as well as from the loss --
+    # leaving them in would drag the training mean toward zero using values we know are wrong.
+    dropout = label_dropouts(angles)
+    np.save(args.out / "label_dropout.npy", dropout)
+    print(f"label dropouts: {int(dropout.sum())} frames ({dropout.mean():.2%}) "
+          f"-- excluded from loss, metrics and normalisation; kept in the sequence")
+
+    train_angles = angles[tr_lo:tr_hi][~dropout[tr_lo:tr_hi]]
     target_mean, target_std = float(train_angles.mean()), float(train_angles.std())
     sample = frames[tr_lo:tr_hi:max(1, (tr_hi - tr_lo) // 2000)].astype(np.float32) / 255.0
     pixel_mean = sample.mean(axis=(0, 1, 2)).tolist()
@@ -136,6 +144,8 @@ def main():
         "split_fractions": list(SPLIT_FRACTIONS),
         "splits": {k: [int(a), int(b)] for k, (a, b) in splits.items()},
         "missing_rows": [int(i) for i in missing],
+        "n_label_dropouts": int(dropout.sum()),
+        "label_dropout_file": "label_dropout.npy",
         "target_mean_deg": target_mean,
         "target_std_deg": target_std,
         "pixel_mean": pixel_mean,

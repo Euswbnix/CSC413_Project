@@ -66,6 +66,16 @@ class SteeringData:
         self.missing = set(self.manifest["missing_rows"])
         self.target_mean = self.manifest["target_mean_deg"]
         self.target_std = self.manifest["target_std_deg"]
+        # Per-frame label validity. Dropouts are labels of exactly 0.0 recorded beside a
+        # large value -- a logging default, not a centred wheel (3.9% of frames are exact
+        # zeros; 973 of them sit next to a value above 5 deg, with a median first difference
+        # of 69 deg against 0.10 overall). The image is identical to its neighbours' and the
+        # target is wrong, so the frame is unlearnable and MSE would punish the model for a
+        # corruption it cannot see. They stay IN the sequence, so windows remain contiguous
+        # and the recurrent state is unbroken; they are masked out of the loss and metrics.
+        dp = d / "label_dropout.npy"
+        self.label_valid = (torch.from_numpy(~np.load(dp)) if dp.exists()
+                            else torch.ones(len(self.angles_deg), dtype=torch.bool))
 
     # ----------------------------------------------------------------- legal windows
 
@@ -90,12 +100,18 @@ class SteeringData:
     # ----------------------------------------------------------------- batch assembly
 
     def gather(self, starts, T):
-        """(B,) start indices -> frames (B,T,3,H,W) float in [0,1] on device, labels (B,T) deg."""
+        """(B,) starts -> frames (B,T,3,H,W) in [0,1], labels (B,T) in degrees, valid (B,T) bool.
+
+        The validity mask is returned as part of the batch on purpose, rather than left as an
+        attribute to consult: masking the loss is not optional, and a three-tuple cannot be
+        silently forgotten the way a lookup can.
+        """
         idx = starts[:, None] + torch.arange(T)
         f = self.frames[idx]                                  # (B,T,H,W,3) uint8, host
         f = f.to(self.device, non_blocking=True).permute(0, 1, 4, 2, 3).float().div_(255.0)
         y = self.angles_deg[idx].to(self.device, non_blocking=True)
-        return f, y
+        v = self.label_valid[idx].to(self.device, non_blocking=True)
+        return f, y, v
 
     def standardise(self, y_deg):
         return (y_deg - self.target_mean) / self.target_std
@@ -178,10 +194,10 @@ def train_batches(data, T, batch_size, k_deg_per_px, epoch_seed, per_frame_bug=F
     pick = starts[torch.randint(len(starts), (n,), generator=g)]
     gdev = torch.Generator(device=data.device).manual_seed(epoch_seed)
     for i in range(0, n - batch_size + 1, batch_size):
-        f, y = data.gather(pick[i:i + batch_size], T)
+        f, y, v = data.gather(pick[i:i + batch_size], T)
         f, y = augment_batch(f, y, k_deg_per_px=k_deg_per_px, model_w=data.model_w,
                              generator=gdev, per_frame_bug=per_frame_bug)
-        yield f, data.standardise(y)
+        yield f, data.standardise(y), v
 
 
 def window_batches(data, split, T, batch_size):
@@ -190,8 +206,8 @@ def window_batches(data, split, T, batch_size):
     frame is scored at all T positions and the position comparison is within-frame."""
     starts = data.window_starts(split, T)
     for i in range(0, len(starts), batch_size):
-        f, y = data.gather(starts[i:i + batch_size], T)
-        yield center_crop(f, data.model_w), data.standardise(y)
+        f, y, v = data.gather(starts[i:i + batch_size], T)
+        yield center_crop(f, data.model_w), data.standardise(y), v
 
 
 def rollout_chunks(data, split, chunk=256):
@@ -210,5 +226,5 @@ def rollout_chunks(data, split, chunk=256):
             continue
         for s in range(a, b, chunk):
             e = min(s + chunk, b)
-            f, y = data.gather(torch.tensor([s]), e - s)
-            yield (s, e), center_crop(f, data.model_w), data.standardise(y)
+            f, y, v = data.gather(torch.tensor([s]), e - s)
+            yield (s, e), center_crop(f, data.model_w), data.standardise(y), v

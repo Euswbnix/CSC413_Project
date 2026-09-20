@@ -199,7 +199,46 @@ def angle_stats(a, out):
     d = np.abs(np.diff(a))
     out(f"adjacent-frame |Δangle|  : median {np.median(d):.3f} deg, frac < 1 deg"
         f" {float((d < 1).mean()):.4f}")
+    bad = label_dropouts(a)
+    zeros = int((a == 0.0).sum())
+    out(f"exact-zero labels        : {zeros} ({zeros/len(a):.2%})")
+    out(f"  of which DROPOUTS      : {int(bad.sum())} (exact 0 beside a value > 5 deg)"
+        f"  <-- exclude from loss and metrics, keep in the sequence")
+    if bad.any():
+        j = np.abs(np.diff(a))[np.clip(np.flatnonzero(bad) - 1, 0, len(a) - 2)]
+        out(f"  their first difference : median {np.median(j):.1f} deg"
+            f" (overall median {np.median(d):.2f}) -- this is the source of the"
+            " physically impossible tail in the frame-to-frame delta")
     out("  ^ this is the irreducible-error / noise-floor ingredient for Justification.")
+
+
+def label_dropouts(a, neighbour_thresh=5.0):
+    """Frames whose label is EXACTLY 0.0 while a neighbour is large: a logging dropout
+    written as the default value, not a wheel passing through centre.
+
+    On the 2018 release 2,491 frames (3.90%) are exactly 0.000000, and 973 of them sit
+    beside a value above 5 deg -- 111 of them beside a value above 50 deg. Example:
+
+        row 6146:  -81.28  -82.08  [+0.00]  -84.20  -84.20
+
+    The first difference at these rows has a median magnitude of 69 deg against 0.10 deg
+    overall, which is also the source of the otherwise physically impossible tail in the
+    frame-to-frame delta (a 213 deg step at 17.5 fps would be ~2,100 deg/s of wheel rate;
+    a fast human hand manages 400-800).
+
+    These are unlearnable: the image is identical to its neighbours' and the target is
+    wrong, so under MSE the model is penalised for a corruption it cannot see. They also
+    land in the straight bin, flattering predict-0 exactly where it is already strongest.
+
+    Returns a boolean mask of frames to EXCLUDE from the loss and from metrics. They stay
+    in the sequence so windows remain contiguous -- the model still sees the image, it just
+    earns no gradient and no score from that frame. Exact zeros whose neighbours are also
+    near zero are left alone: indistinguishable from a genuine centred wheel, and harmless.
+    """
+    z = (a == 0.0)
+    prev = np.concatenate([[a[0]], a[:-1]])
+    nxt = np.concatenate([a[1:], [a[-1]]])
+    return z & (np.maximum(np.abs(prev), np.abs(nxt)) > neighbour_thresh)
 
 
 def autocorr(a, lags, out):

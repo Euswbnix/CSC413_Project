@@ -128,8 +128,8 @@ def test_the_processed_directory_drives_the_dataset(processed):
     starts = d.window_starts("train", 16)
     assert len(starts) > 0
     assert not any(DROPPED_ROW in range(s, s + 16) for s in starts.tolist())
-    f, y = next(iter(train_batches(d, 16, 4, k_deg_per_px=0.1, epoch_seed=0)))
-    assert f.shape == (4, 16, 3, 66, 200) and y.shape == (4, 16)
-    covered = sum(e - s for (s, e), _, _ in rollout_chunks(d, "test", chunk=256))
+    f, y, v = next(iter(train_batches(d, 16, 4, k_deg_per_px=0.1, epoch_seed=0)))
+    assert f.shape == (4, 16, 3, 66, 200) and y.shape == (4, 16) == v.shape
+    covered = sum(e - s for (s, e), _, _, _ in rollout_chunks(d, "test", chunk=256))
     lo, hi = d.manifest["splits"]["test"]
     assert covered == hi - lo
