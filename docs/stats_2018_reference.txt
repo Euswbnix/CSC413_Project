@@ -44,6 +44,9 @@ angle p1/p25/p50/p75/p99 : -87.38 / -4.34 / 1.51 / 7.06 / 76.34
   frac |angle| < 100      : 0.9865
   frac |angle| >= 40       : 0.07425   <-- decides whether the sharp bin is viable at all
 adjacent-frame |Δangle|  : median 0.100 deg, frac < 1 deg 0.8771
+exact-zero labels        : 2491 (3.90%)
+  of which DROPOUTS      : 973 (exact 0 beside a value > 5 deg)  <-- exclude from loss and metrics, keep in the sequence
+  their first difference : median 12.0 deg (overall median 0.10) -- this is the source of the physically impossible tail in the frame-to-frame delta
   ^ this is the irreducible-error / noise-floor ingredient for Justification.
 
 --- autocorrelation ---
@@ -85,25 +88,3 @@ persistence (y_hat_t = y_{t-1}) is reported because it is the naive baseline a g
 --- GATE G1 ---
 test curve bin [15,inf): 1774 frames across 19 independent turn events
 PASS -- the merged curve bin has adequate independent-event support.
-
---- pixel-side audit ---
-subsampling every 11 frames -> 5803 frames for the NxN audit
-mean|Δpixel| between frames 11 apart, p5/p50/p95 : 1.454 / 15.304 / 46.385
-likely-stationary threshold       : 3.061  (0.2 x median)
-likely-stationary frames          : 0.0815 of sampled frames
-  stationary run lengths (in units of 11 frames) : n=62, median 3, max 55
-  report this PER SPLIT in the README and state whether such frames are dropped, kept, or reported separately. Part of the near-zero mass is a STOPPED CAR, which makes predict-0 artificially stronger in the straight bin.
-revisit audit: exclusion band = +/-28 subsampled frames (= 300 raw frames, the measured decorrelation lag)
-  max similarity WITHIN the band  : 1.000   (expected ~1.0; this is the uninformative one)
-  max similarity OUTSIDE the band : 1.000   <-- the one that matters
-  pairs with similarity > 0.9      : 17148
-  their raw-frame separation      : median 583, max 42537
-  CAUTION: a stopped car produces identical frames at two unrelated times, so high similarity far from the diagonal is NOT automatically a revisit -- cross-check these indices against the likely-stationary mask before concluding.
-  test->train nearest-neighbour similarity p50/p95/p99/max: 0.812 / 0.876 / 0.901 / 0.920
-  test frames with a train neighbour > 0.9: 13 / 1133 (1.15%)
-  If that fraction is non-trivial the buffer did not prevent leakage and the headline table must be reported twice: full test set, and leak-free subset.
-  image decorrelation length : 4477 raw frames (the angle's is 300; images decorrelate 14.9x slower)
-  offset profile, detrended, searched beyond 13431 raw frames:
-    strongest secondary peak : +0.019 at offset 27577 raw frames (3296 pairs averaged), 2.0 sigma
-    => no stripe. The high pair count above is block-structured scene similarity, not revisits. The test-to-train nearest-neighbour figures are the primary evidence here and they agree.
-STILL TO DO BY HAND: render one 10-second strip as a GIF with the true angle overlaid and confirm the wheel angle matches the visible curvature. It is the ONLY check in the project that catches a uniform frame/label off-by-one, and every statistic above passes such a misalignment.
