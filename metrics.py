@@ -140,7 +140,19 @@ def pearson_r(pred, true, valid=None):
         return float("nan")
     p, t = p[m] - p[m].mean(), t[m] - t[m].mean()
     d = np.sqrt((p * p).sum() * (t * t).sum())
+    # A constant predictor has zero variance, so r is genuinely undefined -- but that is a
+    # RESULT, not a gap in the data. Collapse to the constant is this task's dominant failure
+    # mode (measured: the LSTM lands there at 1e-3, 3e-3 and 1e-2 across three seeds, and the
+    # CfC does too at 3e-3), so a bare NaN in a table reads as "missing" when it means
+    # "the model predicts one number". `constant_prediction` below makes it reportable.
     return float((p * t).sum() / d) if d > 0 else float("nan")
+
+
+def constant_prediction(pred, valid=None, tol=1e-6):
+    """True when the model emits essentially one number regardless of input."""
+    p = np.asarray(pred, dtype=np.float64)
+    m = np.ones_like(p, dtype=bool) if valid is None else np.asarray(valid, dtype=bool)
+    return bool(m.sum() > 1 and float(p[m].std()) < tol)
 
 
 def false_alarm_rate(pred, true, valid=None):
@@ -159,6 +171,9 @@ def summary(pred, true, valid=None):
         "global_mae": mae(pred, true, np.ones_like(np.asarray(true), dtype=bool)
                           if valid is None else np.asarray(valid, dtype=bool)),
         "pearson_r": pearson_r(pred, true, valid),
+        "constant_prediction": constant_prediction(pred, valid),
+        "pred_std": float(np.asarray(pred)[np.ones_like(np.asarray(pred), dtype=bool)
+                          if valid is None else np.asarray(valid, dtype=bool)].std()),
         "false_alarm_rate": false_alarm_rate(pred, true, valid),
         "n_valid": int(len(true) if valid is None else np.asarray(valid).sum()),
         "bins": per_bin(pred, true, valid),

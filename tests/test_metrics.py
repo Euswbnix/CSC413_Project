@@ -220,3 +220,19 @@ def test_shrinkage_is_still_punished_under_the_new_aggregation():
     true = rng.normal(0, 30, 6000)
     assert macro_skill(0.5 * true, true) < macro_skill(true + rng.normal(0, 3, 6000), true)
     assert macro_skill(np.zeros_like(true), true) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_constant_predictor_is_reported_as_a_result_not_a_gap():
+    """MUST-FIRE. Collapse to the constant is this task's dominant failure mode -- measured,
+    the LSTM lands there at 1e-3, 3e-3 and 1e-2 across three seeds. A bare NaN Pearson r in a
+    results table reads as missing data when it means the model emits one number, which is
+    the most important thing that table could say."""
+    from metrics import constant_prediction
+    true = np.linspace(-40, 40, 500)
+    assert constant_prediction(np.full(500, 2.0))
+    assert not constant_prediction(true)
+    s = summary(np.full(500, 2.0), true)
+    assert s["constant_prediction"] is True
+    assert s["pred_std"] == pytest.approx(0.0)
+    assert np.isnan(s["pearson_r"])          # undefined, and now accompanied by the reason
+    assert summary(true, true)["constant_prediction"] is False
