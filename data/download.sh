@@ -29,9 +29,13 @@ mkdir -p "$DEST"
 
 # gdown, NOT wget/curl. A plain wget on a large Google Drive file silently saves the
 # virus-scan interstitial HTML instead of the zip.
-command -v gdown >/dev/null 2>&1 || { echo "gdown not found:  pip install gdown" >&2; exit 1; }
+# Fall back to the module entry point: `pip install --user` puts the script in ~/.local/bin,
+# which is not on PATH on a default Ubuntu login, and that is a needless way to fail.
+if command -v gdown >/dev/null 2>&1; then GDOWN="gdown"
+elif python3 -c "import gdown" 2>/dev/null; then GDOWN="python3 -m gdown"
+else echo "gdown not found:  python3 -m pip install --user gdown" >&2; exit 1; fi
 
-[ -f "$ARCHIVE" ] || { echo "==> downloading $VERSION release"; gdown "$FILE_ID" -O "$ARCHIVE"; }
+[ -f "$ARCHIVE" ] || { echo "==> downloading $VERSION release with: $GDOWN"; $GDOWN "$FILE_ID" -O "$ARCHIVE"; }
 
 ACTUAL_SHA=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)
 echo "sha256: $ACTUAL_SHA"
