@@ -142,7 +142,8 @@ def center_crop(frames, model_w):
 
 
 def augment_batch(frames, labels_deg, *, k_deg_per_px, model_w, generator=None,
-                  brightness=0.25, shadow_prob=0.5, flip_prob=0.5, per_frame_bug=False):
+                  brightness=0.25, shadow_prob=0.5, flip_prob=0.5, translate=True,
+                  per_frame_bug=False):
     """Domain-adapted augmentation. frames (B,T,3,H,W) in [0,1]; labels (B,T) in DEGREES.
 
     Returns (frames (B,T,3,H,model_w), labels (B,T) in degrees).
@@ -173,8 +174,17 @@ def augment_batch(frames, labels_deg, *, k_deg_per_px, model_w, generator=None,
     def rand5():
         return rand2().view(B, pT, 1, 1, 1)
 
+    # `translate` and `k` are SEPARATE knobs on purpose. Folding "no translation" into k=0
+    # would make k=0 mean "translate but do not compensate the label" -- augmentation with a
+    # knowingly wrong target, which is worse than either arm of the ablation and is exactly
+    # the confound the ablation exists to isolate. With them split, `--aug none` is genuinely
+    # no augmentation, and the k sweep's k=0 point is the deliberate "translate without
+    # compensating" control, which is what makes an interior minimum in k interpretable.
     max_shift = (W - model_w) // 2
-    start = torch.randint(0, 2 * max_shift + 1, (B, pT), device=dev, generator=g)
+    if translate:
+        start = torch.randint(0, 2 * max_shift + 1, (B, pT), device=dev, generator=g)
+    else:
+        start = torch.full((B, pT), max_shift, device=dev, dtype=torch.long)
     d = (start - max_shift).float()
 
     col = start.view(B, pT, 1, 1, 1) + torch.arange(model_w, device=dev).view(1, 1, 1, 1, -1)
@@ -201,7 +211,7 @@ def augment_batch(frames, labels_deg, *, k_deg_per_px, model_w, generator=None,
 # ----------------------------------------------------------------------- iterators
 
 def train_batches(data, T, batch_size, k_deg_per_px, epoch_seed, per_frame_bug=False,
-                  photometric=True):
+                  photometric=True, translate=True):
     """Random-start windows, augmented. Yields Batch with standardised labels.
 
     `photometric=False` disables flip, brightness and shadow so that `--aug none` means what
@@ -215,7 +225,10 @@ def train_batches(data, T, batch_size, k_deg_per_px, epoch_seed, per_frame_bug=F
     gdev = torch.Generator(device=data.device).manual_seed(epoch_seed)
     for i in range(0, n - batch_size + 1, batch_size):
         b = data.gather(pick[i:i + batch_size], T)
-        off = {} if photometric else dict(brightness=0.0, shadow_prob=0.0, flip_prob=0.0)
+        off = ({} if photometric else
+               dict(brightness=0.0, shadow_prob=0.0, flip_prob=0.0))
+        if not translate:
+            off["translate"] = False
         f, y = augment_batch(b.frames, b.y, k_deg_per_px=k_deg_per_px, model_w=data.model_w,
                              generator=gdev, per_frame_bug=per_frame_bug, **off)
         yield Batch(f, data.standardise(y), b.valid, b.dt)

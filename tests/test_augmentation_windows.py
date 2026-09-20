@@ -129,8 +129,20 @@ def test_aug_none_really_means_none():
     f = _t.rand(4, 8, C, H, W, generator=g(20))
     y = _t.randn(4, 8, generator=g(21)) * 20
     out, lab = _ab(f, y, k_deg_per_px=0.0, model_w=MW, generator=g(22),
-                   brightness=0.0, shadow_prob=0.0, flip_prob=0.0)
+                   brightness=0.0, shadow_prob=0.0, flip_prob=0.0, translate=False)
     torch.testing.assert_close(lab, y, rtol=0, atol=0)
     torch.testing.assert_close(out, center_crop(f, MW), rtol=0, atol=0)
     on, _ = _ab(f, y, k_deg_per_px=0.0, model_w=MW, generator=g(22))
     assert (on - center_crop(f, MW)).abs().max() > 0, "augmentation ON changed nothing"
+
+
+def test_k_zero_still_translates_and_that_is_deliberate():
+    """MUST-FIRE the other way: k=0 is the sweep's "translate without compensating" control,
+    so it must NOT silently become "no translation". Folding the two together would make the
+    k sweep uninterpretable -- an interior minimum would no longer distinguish "compensation
+    helps" from "translation helps"."""
+    f = torch.rand(8, 4, C, H, W, generator=g(30))
+    y = torch.randn(8, 4, generator=g(31)) * 20
+    out, lab = augment_batch(f, y, k_deg_per_px=0.0, model_w=MW, generator=g(32), **OFF)
+    torch.testing.assert_close(lab, y, rtol=0, atol=0)          # no label correction
+    assert (out - center_crop(f, MW)).abs().max() > 0           # but the frames DID move

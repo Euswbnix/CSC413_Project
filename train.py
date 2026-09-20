@@ -154,13 +154,14 @@ def main():
     brk = model.param_breakdown()
     k_eff = args.k if args.aug == "full" else 0.0
     photo = args.aug != "none"
+    translate = args.aug == "full"
 
     cfg = dict(vars(args), arm_params=brk, device=str(dev), git_sha=git_sha(),
                versions=versions(), fixed=FIXED,
                manifest={k: data.manifest[k] for k in
                          ("n_frames", "splits", "split_buffer", "fps_measured",
                           "target_mean_deg", "target_std_deg", "n_label_dropouts")},
-               k_effective=k_eff, photometric=photo)
+               k_effective=k_eff, photometric=photo, translate=translate)
     (run / "config.json").write_text(json.dumps(cfg, indent=2, default=str) + "\n")
     print(f"[{name}] {brk['total']:,} params "
           f"(encoder {brk['encoder']:,} + recurrent {brk['recurrent']:,} + readout {brk['readout']})")
@@ -182,7 +183,7 @@ def main():
         for step, b in enumerate(train_batches(
                 data, args.T, FIXED["batch_size"], k_deg_per_px=k_eff,
                 epoch_seed=args.seed * 1000 + epoch, per_frame_bug=args.per_frame_bug,
-                photometric=photo)):
+                photometric=photo, translate=translate)):
             f, y, v, dt = b
             if args.shuffle_frames:
                 f, y, v, dt = shuffle_within_windows(f, y, v, dt, gen)
