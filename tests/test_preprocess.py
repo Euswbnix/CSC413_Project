@@ -144,6 +144,6 @@ def test_the_processed_directory_drives_the_dataset(processed):
     b = next(iter(train_batches(d, 16, 4, k_deg_per_px=0.1, epoch_seed=0)))
     f, y, v = b.frames, b.y, b.valid
     assert f.shape == (4, 16, 3, 66, 200) and y.shape == (4, 16) == v.shape
-    covered = sum(e - s for (s, e), _ in rollout_chunks(d, "test", chunk=256))
+    covered = sum(e - s for (_, s, e), _ in rollout_chunks(d, "test", chunk=256))
     lo, hi = d.manifest["splits"]["test"]
     assert covered == hi - lo
