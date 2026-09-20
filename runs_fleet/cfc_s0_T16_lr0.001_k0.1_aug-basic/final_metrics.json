@@ -1,0 +1,60 @@
+{
+  "name": "cfc_s0_T16_lr0.001_k0.1_aug-basic",
+  "arm": "cfc",
+  "seed": 0,
+  "best_epoch": 11,
+  "best_val_macro_skill": 0.16109056435403568,
+  "val": {
+    "macro_skill": 0.16109056435403568,
+    "macro_mae": 13.646933356022691,
+    "macro_mae_predict0": 16.267469140473413,
+    "global_mae": 10.938342094421387,
+    "pearson_r": 0.40621590452400885,
+    "false_alarm_rate": 0.5219531269923579,
+    "n_valid": 192173,
+    "bins": {
+      "straight [0,5)": {
+        "n_frames": 117637,
+        "n_events": 30,
+        "mean_abs_true": 2.371663134816448,
+        "mae_model": 8.967816388772102,
+        "mae_predict0": 2.371663134816448,
+        "mae_persistence": 0.31801049780377266,
+        "p95_abs_err": 30.260933589935302
+      },
+      "gentle [5,15)": {
+        "n_frames": 51635,
+        "n_events": 47,
+        "mean_abs_true": 8.948313822413363,
+        "mae_model": 10.958921426247798,
+        "mae_predict0": 8.948313822413363,
+        "mae_persistence": 0.537012696355059,
+        "p95_abs_err": 26.491412544250487
+      },
+      "curve [15,inf)": {
+        "n_frames": 22901,
+        "n_events": 17,
+        "mean_abs_true": 37.48243046419042,
+        "mae_model": 21.014062253048177,
+        "mae_predict0": 37.48243046419042,
+        "mae_persistence": 2.159550745915827,
+        "p95_abs_err": 71.68869590759277
+      },
+      "(diagnostic) >=40": {
+        "n_frames": 8165,
+        "n_events": 6,
+        "mean_abs_true": 61.416800104294246,
+        "mae_model": 33.59454137323389,
+        "mae_predict0": 61.416800104294246,
+        "mae_persistence": 3.683008093287882,
+        "p95_abs_err": 124.37588520050048
+      }
+    }
+  },
+  "params": {
+    "encoder": 168244,
+    "recurrent": 24832,
+    "readout": 65,
+    "total": 193141
+  }
+}

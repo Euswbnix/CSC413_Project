@@ -1,0 +1,63 @@
+{
+  "arm": "cfc",
+  "seed": 1,
+  "T": 16,
+  "lr": 0.001,
+  "k": 0.1,
+  "aug": "none",
+  "epochs": 30,
+  "fixed_dt": false,
+  "shuffle_frames": false,
+  "per_frame_bug": false,
+  "processed": "/var/tmp/csc413_data/processed",
+  "runs": "/var/tmp/csc413_runs",
+  "name": null,
+  "max_steps": null,
+  "min_free_gb": 4.0,
+  "device": "cuda",
+  "arm_params": {
+    "encoder": 168244,
+    "recurrent": 24832,
+    "readout": 65,
+    "total": 193141
+  },
+  "git_sha": "74790bc6bdfd53c74d822a8bd9f96f0d87c70dc2",
+  "versions": {
+    "torch": "2.13.0",
+    "numpy": "2.2.6",
+    "ncps": "1.0.1"
+  },
+  "fixed": {
+    "optimizer": "AdamW",
+    "weight_decay": 0.0001,
+    "clip_grad_norm": 1.0,
+    "batch_size": 64,
+    "schedule": "cosine",
+    "patience": 10
+  },
+  "manifest": {
+    "n_frames": 63825,
+    "splits": {
+      "train": [
+        0,
+        37995
+      ],
+      "val": [
+        38595,
+        50760
+      ],
+      "test": [
+        51360,
+        63825
+      ]
+    },
+    "split_buffer": 300,
+    "fps_measured": 17.54388371849838,
+    "target_mean_deg": 1.4602139240716443,
+    "target_std_deg": 31.08833544984239,
+    "n_label_dropouts": 973
+  },
+  "k_effective": 0.0,
+  "photometric": false,
+  "translate": false
+}

@@ -91,7 +91,7 @@ run)
 status)
   for h in $(hosts); do
     ( r=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$h" \
-        "echo \"\$(pgrep -cf 'train.py --arm') running, \$(ls $RUNS_LOCAL 2>/dev/null | wc -l) runs, \$(tail -1 /var/tmp/fleet_queue.log 2>/dev/null | cut -c1-40)\"" 2>/dev/null)
+        "echo \"\$(pgrep -cf '[t]rain.py --arm') running, \$(ls $RUNS_LOCAL 2>/dev/null | wc -l) runs, \$(tail -1 /var/tmp/fleet_queue.log 2>/dev/null | cut -c1-40)\"" 2>/dev/null)
       printf "  %-46s %s\n" "$h" "${r:-<unreachable>}" ) &
   done; wait ;;
 
