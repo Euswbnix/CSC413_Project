@@ -6,5 +6,7 @@ params:     ; python scripts/param_table.py
 eda:        ; python data/eda_sullychen.py --data-root data/raw
 status:     ; python scripts/readme_status.py
 figures:    ; bash scripts/pull_figures.sh --with-gif
+plots:      ; python scripts/make_figures.py
+tables:     ; python scripts/make_tables.py
 preprocess: ; python data/preprocess.py --data-root data/raw --out data/processed --verify-gif 23000
 download:   ; bash data/download.sh
