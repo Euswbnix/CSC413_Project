@@ -16,3 +16,8 @@ __pycache__/
 .pytest_cache/
 venv/
 .DS_Store
+
+# Generated outputs. A dated snapshot of stats.txt lives in docs/ instead.
+stats.txt
+artifacts_2017/
+data/processed/
