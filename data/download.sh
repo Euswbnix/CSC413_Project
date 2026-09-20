@@ -42,17 +42,33 @@ else
   echo "      export SULLYCHEN_${VERSION}_SHA256=$ACTUAL_SHA"
 fi
 
-echo "==> extracting"
-unzip -q -o "$ARCHIVE" -d "$DEST"
-
-# Flatten if the archive nests one level down. `mv dir/*` is wrong twice over: the glob skips
-# dotfiles (the archive ships a 2.3 MB .DS_Store, which then leaves the directory non-empty),
-# and with 63,000 entries it can blow past ARG_MAX. find -exec ... + handles both.
-if [ ! -f "$DEST/data.txt" ] && [ -f "$DEST/driving_dataset/data.txt" ]; then
-  find "$DEST/driving_dataset" -mindepth 1 -maxdepth 1 -exec mv -t "$DEST" {} +
-  rmdir "$DEST/driving_dataset" || echo "  note: $DEST/driving_dataset not empty, left in place"
+# Idempotent: re-running must not re-extract 3.1 GB. Skip when the tree already looks right.
+NEED_EXTRACT=1
+if [ -f "$DEST/data.txt" ]; then
+  L=$(grep -c . "$DEST/data.txt"); J=$(find "$DEST" -maxdepth 1 -name '*.jpg' | wc -l | tr -d ' ')
+  [ "$J" -ge "$L" ] && { NEED_EXTRACT=0; echo "==> already extracted ($J images, $L labels); skipping"; }
 fi
-find "$DEST" -maxdepth 1 -name '.DS_Store' -delete    # macOS junk shipped inside the archive
+if [ "$NEED_EXTRACT" = 1 ]; then
+  echo "==> extracting"
+  unzip -q -o "$ARCHIVE" -d "$DEST"
+fi
+
+# Flatten. The two releases do NOT share a layout -- 2017 puts everything at the top level
+# next to a nested dir holding only a .DS_Store, while 2018 puts data.txt at the top and all
+# 63,825 images in a `data/` subdirectory. So locate the directory that actually holds the
+# images rather than assuming, and lift them to $DEST so everything downstream sees one shape.
+IMGDIR=$(find "$DEST" -mindepth 2 -maxdepth 2 -name '*.jpg' -printf '%h\n' 2>/dev/null \
+         | sort | uniq -c | sort -rn | head -1 | awk '{print $2}')
+if [ -n "$IMGDIR" ]; then
+  echo "==> flattening images from $IMGDIR"
+  # find -exec ... + rather than a glob: the glob skips dotfiles and would risk ARG_MAX at
+  # 63,825 entries.
+  find "$IMGDIR" -maxdepth 1 -name '*.jpg' -exec mv -t "$DEST" {} +
+  [ -f "$IMGDIR/data.txt" ] && [ ! -f "$DEST/data.txt" ] && mv "$IMGDIR/data.txt" "$DEST/"
+  rmdir "$IMGDIR" 2>/dev/null || echo "  note: $IMGDIR not empty, left in place"
+fi
+rm -rf "$DEST/__MACOSX"                                # macOS zip metadata
+find "$DEST" -name '.DS_Store' -delete 2>/dev/null || true
 
 echo "==> audit"
 [ -f "$DEST/data.txt" ] || { echo "  FAIL: no data.txt under $DEST" >&2; exit 1; }
@@ -61,7 +77,14 @@ JPGS=$(find "$DEST" -maxdepth 1 -name '*.jpg' | wc -l | tr -d ' ')
 FIRST=$(head -1 "$DEST/data.txt")
 echo "  data.txt lines : $LINES"
 echo "  .jpg files     : $JPGS"
-echo "  difference     : $((JPGS - LINES))   (expect roughly +161; repo issue #2, labels unaffected)"
+DIFF=$((JPGS - LINES))
+echo "  difference     : $DIFF"
+if [ "$DIFF" -gt 0 ]; then
+  echo "                   ($DIFF images carry no label line. Known for the 2017 release"
+  echo "                    (repo issue #2, ~161); the author confirmed the remaining angles"
+  echo "                    are unaffected. It is why the join must be by FILENAME: data.txt"
+  echo "                    line i IS memmap row i, never a position in the directory.)"
+fi
 echo "  first line     : $FIRST"
 
 # THE CHECK THIS SCRIPT ORIGINALLY LACKED. Verifying a hash only proves the bytes arrived
