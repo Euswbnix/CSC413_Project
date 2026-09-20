@@ -45,4 +45,10 @@ def test_weights_are_shared_across_timesteps():
     frame = torch.randn(1, 1, 3, *MODEL_INPUT_HW, generator=g, dtype=torch.float64)
     out = enc(frame.repeat(1, 4, 1, 1, 1))
     for t in range(1, 4):
-        torch.testing.assert_close(out[:, t], out[:, 0], rtol=0, atol=0)
+        # NOT atol=0, and the tolerance is derived rather than tuned. Convolution reduces,
+        # and a batched GEMM may accumulate identical rows in a different order, so the same
+        # frame at two positions can differ in the last bit (measured 4e-17 in float64 on the
+        # 32-thread training box; bit-identical on a 10-thread laptop, which is environment
+        # luck, not a guarantee). What this test distinguishes is weight SHARING: per-timestep
+        # weights would differ by O(1). 1e-14 leaves fourteen orders of margin.
+        torch.testing.assert_close(out[:, t], out[:, 0], rtol=0, atol=1e-14)

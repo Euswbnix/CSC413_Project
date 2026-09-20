@@ -1,5 +1,9 @@
 -r requirements.txt
-# Test-only. The model NEVER imports this -- tests/test_hygiene.py enforces that by grep.
-# Used solely as a numerical oracle for tests/test_cfc_oracle.py.
+# Test-only. The model NEVER imports ncps -- tests/test_hygiene.py enforces that by grep.
+# It exists solely as a numerical oracle for tests/test_cfc_oracle.py.
+#
+# Record the version with importlib.metadata.version("ncps"), never ncps.__version__: the
+# 1.0.1 wheel's ncps/__init__.py declares "0.0.2", so every run's config.json would cite a
+# version that does not exist on PyPI. Confirmed on the training box.
 ncps==1.0.1
 pytest==8.3.3

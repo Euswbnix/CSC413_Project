@@ -1,10 +1,23 @@
-# Pinned. Record the exact versions that pass scripts/smoke_test.py on your machine.
-# On RTX 5090 / Blackwell (sm_120): read `nvidia-smi` FIRST.
-#   driver >= 580.65.06  ->  the default PyPI Linux wheel already ships sm_120 kernels
-#   driver 570.x-579.x   ->  update the driver, or install from the cu128 index:
-#                            pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
-# A too-old driver installs cleanly, reports the card correctly, and then fails every
-# kernel -- scripts/smoke_test.py asserts an on-device backward pass to catch that.
-torch==2.8.0
-numpy==2.0.2
-matplotlib==3.9.2
+# Pinned to the TRAINING machine, verified by scripts/smoke_test.py on 2026-09-19:
+#   RTX 5090 (sm_120), driver 590.48.01, CUDA 13.1, Ubuntu 24.04
+#   conda env `DL` at ~/miniconda/envs/DL, python 3.10.18
+# The full test suite passes against these exact versions on that box.
+#
+# Blackwell note: read `nvidia-smi` before installing. With driver >= 580.65.06 the default
+# PyPI wheel already ships sm_120 kernels and the widely-copied `--index-url .../cu128`
+# advice is unnecessary. An older driver installs cleanly, reports the card correctly, and
+# then fails every kernel -- scripts/smoke_test.py asserts a real on-device backward pass
+# precisely to catch that, so run it before downloading 3.1 GB of data.
+#
+# Also verified on that box, and why smoke_test turns both off: PyTorch's Blackwell defaults
+# are ASYMMETRIC -- cudnn.allow_tf32=True but matmul.allow_tf32=False -- so the convolution
+# stack would run at a 10-bit mantissa while the CfC's linear layers ran true fp32, an
+# asymmetric precision difference sitting inside the headline comparison.
+torch==2.11.0
+numpy==1.26.4
+matplotlib==3.10.8
+pillow==11.3.0
+gdown==6.4.0
+
+# The Mac development box runs torch 2.8.0 / numpy 2.0.2 on CPU and the suite passes there
+# too; the pins above describe the environment that produced the reported results.
