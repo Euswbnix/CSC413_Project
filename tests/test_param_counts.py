@@ -92,3 +92,44 @@ def test_cnn_linear_is_the_lower_bracket():
     bracket the recurrent arms from below and at matched capacity, so the cost of deleting
     TEMPORAL STATE cannot be confused with the cost of deleting HEAD CAPACITY."""
     assert sum(p.numel() for p in build_arm("cnn_linear").readout.parameters()) == 33
+
+
+def test_causal_mean_is_causal_order_invariant_and_free():
+    """The three properties that make cnn_avg a valid control, each pinned.
+
+    MUST-FIRE on causality especially: averaging the whole window instead of the prefix
+    would leak future frames into early predictions, and the arm would beat the recurrent
+    ones for a reason that has nothing to do with the hypothesis.
+    """
+    import torch
+    from models.interface import build_arm
+
+    m = build_arm("cnn_avg")
+    assert sum(p.numel() for p in m.rnn.parameters()) == 0, "the control must be parameter-free"
+
+    mean = m.rnn
+    z = torch.randn(2, 6, 32, generator=torch.Generator().manual_seed(0))
+    out, _ = mean(z)
+    # causal: step t is the mean of the PREFIX, nothing after it
+    for t in range(6):
+        torch.testing.assert_close(out[:, t], z[:, :t + 1].mean(1), rtol=0, atol=1e-6)
+    # a change at step 5 must not move step 2
+    z2 = z.clone(); z2[:, 5] += 99.0
+    torch.testing.assert_close(mean(z2)[0][:, 2], out[:, 2], rtol=0, atol=1e-6)
+    # order-invariant over a full window, which is the whole point of the control
+    perm = torch.randperm(6, generator=torch.Generator().manual_seed(1))
+    torch.testing.assert_close(mean(z[:, perm])[0][:, -1], out[:, -1], rtol=0, atol=1e-5)
+
+
+def test_causal_mean_chunked_rollout_is_exact():
+    """MUST-FIRE: evaluation is a chunked stateful rollout, so carrying (sum, count) has to
+    reproduce the unchunked answer or this arm's numbers are not comparable to the others'."""
+    import torch
+    from models.interface import build_arm
+
+    mean = build_arm("cnn_avg").rnn
+    z = torch.randn(1, 12, 32, generator=torch.Generator().manual_seed(2))
+    whole, _ = mean(z)
+    a, hx = mean(z[:, :5])
+    b, _ = mean(z[:, 5:], hx=hx)
+    torch.testing.assert_close(torch.cat([a, b], 1), whole, rtol=0, atol=1e-5)

@@ -101,6 +101,34 @@ class CfCAdapter(nn.Module):
         return self.rnn(z, dt=dt, hx=hx)
 
 
+class CausalMean(nn.Module):
+    """Cumulative mean of the encoder features: output_t = mean(z_1..z_t).
+
+    The control that turns a mechanistic story into a falsifiable prediction. Measured over
+    ten seeds, destroying frame ORDER at training time changed nothing (curve-bin MAE 29.54
+    shuffled against 30.31 ordered) while the recurrent arms still beat the per-frame CNNs
+    (30-31 against 34-36). The only reading that fits both is that the recurrent layer is
+    exploiting the MULTIPLICITY of frames, not their sequence -- i.e. averaging.
+
+    So: same information as the recurrent arms (causal, prefix only -- averaging the whole
+    window would leak future frames into early predictions), same readout, order-invariant
+    by construction, and ZERO parameters. If this matches the CfC, a 24,832-parameter
+    recurrent layer is doing what a running mean does for free, and that is the finding.
+    """
+
+    def __init__(self, input_size):
+        super().__init__()
+        self.output_width = input_size
+
+    def forward(self, z, dt=None, hx=None):
+        counts = torch.arange(1, z.shape[1] + 1, device=z.device, dtype=z.dtype)
+        run = z.cumsum(dim=1) if hx is None else (z.cumsum(dim=1) + hx[0])
+        n = counts.view(1, -1, 1) if hx is None else (counts.view(1, -1, 1) + hx[1])
+        out = run / n
+        # state = (running sum, count) so a chunked stateful rollout is exact
+        return out, (run[:, -1:], n[:, -1:])
+
+
 class NoRecurrence(nn.Module):
     """Identity in the recurrent slot. The readout then acts per frame with no state, so
     the arm is length-invariant BY CONSTRUCTION -- which is why its per-position MAE curve
@@ -144,7 +172,7 @@ class SteeringRegressor(nn.Module):
 
 # ----------------------------------------------------------------------------- the arms
 
-ARMS = ("cfc", "lstm", "lstm_dt", "gru", "cnn_mlp", "cnn_linear", "cnn_2frame")
+ARMS = ("cfc", "lstm", "lstm_dt", "gru", "cnn_mlp", "cnn_linear", "cnn_2frame", "cnn_avg")
 
 
 def build_arm(name, hidden=HIDDEN, feature_dim=FEATURE_DIM, **cfc_kw):
@@ -162,6 +190,8 @@ def build_arm(name, hidden=HIDDEN, feature_dim=FEATURE_DIM, **cfc_kw):
         rnn = TorchRNNAdapter("lstm", feature_dim, hidden, use_dt=(name == "lstm_dt"))
     elif name == "gru":
         rnn = TorchRNNAdapter("gru", feature_dim, matched_width(target, gru_params, feature_dim))
+    elif name == "cnn_avg":
+        rnn = CausalMean(feature_dim)
     elif name in ("cnn_mlp", "cnn_linear", "cnn_2frame"):
         rnn = NoRecurrence(feature_dim)
     else:
@@ -169,7 +199,7 @@ def build_arm(name, hidden=HIDDEN, feature_dim=FEATURE_DIM, **cfc_kw):
 
     encoder = TwoFrameEncoder(feature_dim) if name == "cnn_2frame" else PilotNetEncoder(feature_dim)
 
-    if name == "cnn_mlp":
+    if name in ("cnn_mlp", "cnn_avg"):
         # Capacity-matched non-recurrent head: brackets the recurrent arms from ABOVE in
         # head capacity, so "the cost of deleting temporal state" cannot be confused with
         # "the cost of deleting head capacity".
