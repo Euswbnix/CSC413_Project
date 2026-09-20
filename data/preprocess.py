@@ -166,13 +166,37 @@ def main():
         lo = args.verify_gif
         hi = min(n, lo + k)
         out = []
+        # A RULER, not a needle. The previous version drew a stem leaning by 2 px per degree,
+        # which rendered an essentially straight wheel (-10 deg at a ~15:1 ratio is under
+        # 1 deg at the road wheels) as a 35-degree visual lean -- it looked like a hard turn
+        # over a stretch of near-straight driving, and reading it as a misalignment is the
+        # correct response to that picture. The ruler shows magnitude against the bin edges
+        # instead, so what you see is what the metric sees.
+        W, H = STORE_W * 3, STORE_H * 3
+        BAR, FULL = 46, 120.0                       # strip height; deg at full half-width
+        span = W // 2 - 10
         for i in range(lo, hi, 2):
-            im = Image.fromarray(frames[i]).resize((STORE_W * 3, STORE_H * 3), Image.NEAREST)
+            im = Image.new("RGB", (W, H + BAR), (16, 16, 16))
+            im.paste(Image.fromarray(frames[i]).resize((W, H), Image.NEAREST), (0, 0))
             d = ImageDraw.Draw(im)
-            d.text((6, 6), f"row {i}  {angles[i]:+.1f} deg", fill=(255, 255, 0))
-            cx = STORE_W * 3 // 2
-            d.line([(cx, STORE_H * 3 - 4),
-                    (cx + int(angles[i] * 2.0), STORE_H * 3 - 34)], fill=(255, 0, 0), width=3)
+            bad = bool(dropout[i])
+            d.text((6, 6), f"row {i}   {angles[i]:+.1f} deg"
+                          + ("   LABEL DROPOUT (masked out)" if bad else ""),
+                   fill=(255, 80, 80) if bad else (255, 255, 0))
+            cx, y0 = W // 2, H + BAR // 2
+            d.line([(10, y0), (W - 10, y0)], fill=(90, 90, 90))
+            for edge, col in ((5, (70, 110, 70)), (15, (140, 140, 60)), (40, (170, 90, 60))):
+                for sgn in (-1, 1):
+                    x = cx + int(sgn * edge / FULL * span)
+                    d.line([(x, y0 - 9), (x, y0 + 9)], fill=col)
+                    if sgn > 0:
+                        d.text((x + 3, y0 + 8), str(edge), fill=col)
+            d.line([(cx, y0 - 14), (cx, y0 + 14)], fill=(200, 200, 200))
+            x = cx + int(max(-1.0, min(1.0, angles[i] / FULL)) * span)
+            d.rectangle([min(cx, x), y0 - 5, max(cx, x), y0 + 5],
+                        fill=(255, 80, 80) if bad else (90, 170, 255))
+            d.text((12, y0 - 20), "LEFT", fill=(120, 120, 120))
+            d.text((W - 46, y0 - 20), "RIGHT", fill=(120, 120, 120))
             out.append(im)
         gif = args.out / f"verify_{lo}.gif"
         out[0].save(gif, save_all=True, append_images=out[1:], duration=66, loop=0)
