@@ -87,7 +87,9 @@ def main():
     model.load_state_dict(ck["model"])
 
     p, y, v = rollout_predictions(model, data, args.split, args.chunk, cfg.get("fixed_dt", False))
-    s = metrics.summary(p, y, v)
+    # Skill is also reported against the best constant fitted on VALIDATION: predict-0 is
+    # not the strongest trivial model, and on this task a well-chosen constant beats it.
+    s = metrics.summary(p, y, v, ref_constant=metrics.reference_constant(args.processed, "val"))
 
     T = cfg["T"]
     wp, wy, wv = windowed_predictions(model, data, args.split, T, 64)

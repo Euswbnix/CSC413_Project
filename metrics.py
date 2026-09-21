@@ -27,6 +27,9 @@ a SUBSET VIEW of the curve bin -- scored inside it, listed separately for diagno
 headline number of its own.
 """
 
+import json
+import pathlib
+
 import numpy as np
 
 BIN_EDGES = [0.0, 5.0, 15.0, np.inf]
@@ -57,7 +60,12 @@ def mae(pred, true, mask):
     m = np.asarray(mask, dtype=bool)
     if not m.any():
         return float("nan")
-    return float(np.abs(np.asarray(pred)[m] - np.asarray(true)[m]).mean())
+    # float64 on purpose. Predictions arrive as float32, and a float32 mean depends on the
+    # SIMD summation order of the platform: the same saved predictions gave global MAE values
+    # differing at ~1e-7 relative between x86 (the 5090 host) and ARM (a Mac). Harmless in
+    # size, but a reported number should not depend on where it was computed.
+    return float(np.abs(np.asarray(pred, dtype=np.float64)[m]
+                        - np.asarray(true, dtype=np.float64)[m]).mean())
 
 
 def persistence(true_deg):
@@ -68,6 +76,8 @@ def persistence(true_deg):
     unavailable the moment labels are absent -- which is always, at deployment.
     """
     a = np.asarray(true_deg, dtype=np.float64)
+    if a.size == 0:
+        return a
     return np.concatenate([[a[0]], a[:-1]])
 
 
@@ -141,6 +151,12 @@ def pearson_r(pred, true, valid=None):
     m = np.ones_like(t, dtype=bool) if valid is None else np.asarray(valid, dtype=bool)
     if m.sum() < 2:
         return float("nan")
+    if np.ptp(p[m]) == 0 or np.ptp(t[m]) == 0:
+        # Exactly constant on either side: r is undefined. Checked BEFORE centring, because
+        # centring a constant leaves a rounding residue of ~1e-16 that makes the denominator
+        # positive, and the function then returned a meaningless ~1e-13 instead of NaN --
+        # or NaN, depending on whether the particular value happened to average exactly.
+        return float("nan")
     p, t = p[m] - p[m].mean(), t[m] - t[m].mean()
     d = np.sqrt((p * p).sum() * (t * t).sum())
     # A constant predictor has zero variance, so r is genuinely undefined -- but that is a
@@ -149,6 +165,106 @@ def pearson_r(pred, true, valid=None):
     # CfC does too at 3e-3), so a bare NaN in a table reads as "missing" when it means
     # "the model predicts one number". `constant_prediction` below makes it reportable.
     return float((p * t).sum() / d) if d > 0 else float("nan")
+
+
+def ccc(pred, true, valid=None):
+    """Lin's concordance correlation coefficient: agreement, not just association.
+
+    2*cov / (var_pred + var_true + (mean_pred - mean_true)^2). It is Pearson r multiplied by
+    a penalty for any mismatch in scale or location, so it cannot be won by a model that
+    tracks the signal at the wrong amplitude -- and, unlike r, a constant predictor scores
+    exactly 0 instead of an undefined NaN. That second property is why it is here: on this
+    task macro MAE is largely won by near-constant output (of the 22 LSTM seeds that beat
+    predict-0 on test, 15 have |r| < 0.02), so the report needs a number a constant cannot
+    earn. Population moments (ddof=0), as in Lin (1989).
+    """
+    p = np.asarray(pred, dtype=np.float64)
+    t = np.asarray(true, dtype=np.float64)
+    m = np.ones_like(t, dtype=bool) if valid is None else np.asarray(valid, dtype=bool)
+    if m.sum() < 2:
+        return float("nan")
+    p, t = p[m], t[m]
+    if np.ptp(p) == 0:
+        # Exactly constant. Computed the long way, mean(p) carries a rounding residue of
+        # ~1e-16 and the result is ~1e-18 instead of 0 -- harmless, but the claim above is
+        # "exactly 0", and a collapsed run should read as 0 in every table. cov is 0, so the
+        # value is 0 whenever the denominator is positive -- including when the labels are
+        # constant too but at a different value -- and undefined only when both sides are the
+        # same constant.
+        den = t.var() + (p[0] - t.mean()) ** 2
+        return 0.0 if den > 0 else float("nan")
+    mp, mt = p.mean(), t.mean()
+    cov = ((p - mp) * (t - mt)).mean()
+    den = p.var() + t.var() + (mp - mt) ** 2
+    return float(2.0 * cov / den) if den > 0 else float("nan")
+
+
+def macro_weights(true, valid=None):
+    """Per-frame weights w with macro_mae(pred) == sum(w * |pred - true|).
+
+    Each PRIMARY bin that has frames gets total weight 1/B, split evenly over its frames.
+    The `>=40` diagnostic view is a subset of the curve bin and gets no weight of its own,
+    exactly as in `macro_mae`.
+    """
+    t = np.asarray(true, dtype=np.float64)
+    w = np.zeros_like(t)
+    masks = [mk for nm, mk in bin_masks(t, valid) if nm in BIN_NAMES and mk.any()]
+    for mk in masks:
+        w[mk] = 1.0 / (len(masks) * mk.sum())
+    return w
+
+
+def best_constant(true, valid=None):
+    """The single number that minimises macro MAE on these labels.
+
+    macro MAE of a constant c is sum_i w_i |c - y_i| with the weights above: convex and
+    piecewise linear in c, so its minimiser is the WEIGHTED median of the labels -- exact, no
+    search. This is not the plain median: the straight bin holds most frames but only a third
+    of the weight, so the plain median sits too close to zero.
+
+    Why it exists: macro skill is referenced to predict-0, but predict-0 is not the best
+    trivial model. A well-chosen constant scores about 12.97 test macro MAE against
+    predict-0's 13.40, so "beats predict-0" is a bar a constant clears.
+    """
+    t = np.asarray(true, dtype=np.float64)
+    w = macro_weights(t, valid)
+    keep = w > 0
+    if not keep.any():
+        return float("nan")
+    t, w = t[keep], w[keep]
+    o = np.argsort(t, kind="mergesort")
+    t, w = t[o], w[o]
+    cw = np.cumsum(w)
+    return float(t[int(np.searchsorted(cw, 0.5 * cw[-1]))])
+
+
+def reference_constant(processed, split="val"):
+    """`best_constant` fitted on one split's valid labels, read from the processed directory.
+
+    Numpy only, and it touches three small files (angles_deg.npy, label_dropout.npy,
+    manifest.json), so `evaluate.py` and the offline recompute use literally the same number.
+    Fitted on VALIDATION by default: that is the split model selection already sees, so a
+    constant chosen there is a trivial model that could genuinely have been deployed. It uses
+    every valid label in the split's index range; the rollout additionally skips the handful
+    of frames whose image file is missing, which cannot move a weighted median measurably.
+    """
+    d = pathlib.Path(processed)
+    y = np.load(d / "angles_deg.npy").astype(np.float64)
+    lo, hi = json.loads((d / "manifest.json").read_text())["splits"][split]
+    dp = d / "label_dropout.npy"
+    v = ~np.load(dp).astype(bool) if dp.exists() else np.ones(len(y), dtype=bool)
+    return best_constant(y[lo:hi], v[lo:hi])
+
+
+def macro_skill_vs_constant(pred, true, valid, c):
+    """1 - macro_mae(model) / macro_mae(constant c). The constant scores exactly 0.
+
+    For checkpoint SELECTION this changes nothing: against any fixed reference, skill is a
+    monotone function of the model's macro MAE, so the ranking of checkpoints is identical to
+    `macro_skill`. What changes is where zero sits -- which is the whole point for reporting.
+    """
+    base = macro_mae(np.full(np.shape(true), float(c)), true, valid)
+    return float(1.0 - macro_mae(pred, true, valid) / base) if base > 0 else float("nan")
 
 
 def constant_prediction(pred, valid=None, tol=1e-6):
@@ -195,8 +311,17 @@ def collapsed(s):
     return bool(no_signal and near_baseline)
 
 
-def summary(pred, true, valid=None):
-    return {
+def summary(pred, true, valid=None, ref_constant=None):
+    """All reported metrics for one split.
+
+    `ref_constant` is the best constant FITTED ON VALIDATION (see `best_constant`); pass it
+    when scoring any split so the skill is referenced to a trivial model that could actually
+    have been chosen. `oracle_constant` is fitted on the scored split itself -- it has seen
+    the answers, so it is an upper bound on what any constant can do, never a competitor.
+    """
+    c_oracle = best_constant(true, valid)
+    full = lambda c: np.full(np.shape(true), float(c))
+    out = {
         "macro_skill": macro_skill(pred, true, valid),
         "macro_mae": macro_mae(pred, true, valid),
         "macro_mae_predict0": macro_mae(pred, true, valid, which="mae_predict0"),
@@ -204,12 +329,22 @@ def summary(pred, true, valid=None):
                           if valid is None else np.asarray(valid, dtype=bool)),
         "pearson_r": pearson_r(pred, true, valid),
         "constant_prediction": constant_prediction(pred, valid),
-        "pred_std": float(np.asarray(pred)[np.ones_like(np.asarray(pred), dtype=bool)
-                          if valid is None else np.asarray(valid, dtype=bool)].std()),
+        "pred_std": float(np.asarray(pred, dtype=np.float64)[
+            np.ones_like(np.asarray(pred), dtype=bool) if valid is None
+            else np.asarray(valid, dtype=bool)].std()),
         "false_alarm_rate": false_alarm_rate(pred, true, valid),
         "n_valid": int(len(true) if valid is None else np.asarray(valid).sum()),
         "bins": per_bin(pred, true, valid),
+        "ccc": ccc(pred, true, valid),
+        "oracle_constant": c_oracle,
+        "macro_mae_oracle_constant": macro_mae(full(c_oracle), true, valid),
     }
+    if ref_constant is not None:
+        out["ref_constant"] = float(ref_constant)
+        out["macro_mae_ref_constant"] = macro_mae(full(ref_constant), true, valid)
+        out["macro_skill_vs_ref_constant"] = macro_skill_vs_constant(pred, true, valid,
+                                                                     ref_constant)
+    return out
 
 
 def mae_by_window_position(pred, true, valid, T):
