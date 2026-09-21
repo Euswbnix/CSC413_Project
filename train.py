@@ -172,6 +172,13 @@ def main():
                     help="none = no augmentation; basic = flip+brightness+shadow, k=0; "
                          "full = basic + translation with steering compensation at k")
     ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--dropout", type=float, default=0.0,
+                    help="dropout on the encoder's flattened conv features. 0.0 reproduces "
+                         "every run collected so far. The encoder is 87%% of the parameters "
+                         "and currently carries no regularisation at all, while train loss "
+                         "falls 58%% and validation MSE nearly doubles over 30 epochs.")
+    ap.add_argument("--weight-decay", type=float, default=FIXED["weight_decay"],
+                    help="AdamW weight decay; default 1e-4 is what every collected run used")
     ap.add_argument("--loss", default="mse", choices=("mse", "bin-balanced"),
                     help="mse reproduces every run collected so far; bin-balanced weights "
                          "the three primary bins equally, matching the reported metric")
@@ -219,7 +226,7 @@ def main():
     (run / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     data = SteeringData(args.processed, device=dev, pin=True)
-    model = build_arm(args.arm).to(dev)
+    model = build_arm(args.arm, dropout=args.dropout).to(dev)
     brk = model.param_breakdown()
     k_eff = args.k if args.aug == "full" else 0.0
     photo = args.aug != "none"
@@ -236,7 +243,7 @@ def main():
           f"(encoder {brk['encoder']:,} + recurrent {brk['recurrent']:,} + readout {brk['readout']})")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
-                            weight_decay=FIXED["weight_decay"])
+                            weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     gen = torch.Generator(device=dev).manual_seed(args.seed + 9999)
 

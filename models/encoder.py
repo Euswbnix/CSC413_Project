@@ -29,7 +29,19 @@ FEATURE_DIM = 32
 
 
 class PilotNetEncoder(nn.Module):
-    def __init__(self, feature_dim=FEATURE_DIM):
+    def __init__(self, feature_dim=FEATURE_DIM, dropout=0.0):
+        """`dropout` defaults to 0.0, which reproduces every run collected so far.
+
+        It exists because this encoder is 168,244 of the model's 193,141 parameters -- 87% --
+        and carries no dropout and no normalisation, while the project's parameter matching
+        was spent entirely on the 12.9% that is the recurrent cell. Its training data is one
+        continuous drive in which adjacent frames are near-duplicates, so the effective
+        sample count is far below the nominal 37,995. Measured consequence: over 30 epochs
+        train loss falls 58% while validation MSE nearly doubles (0.285 -> 0.482) and
+        validation global MAE rises 9.96 -> 13.41 deg. Early stopping then fires at a median
+        epoch of 4 out of 30, and 15% of runs never improve on epoch 0 at all -- which is why
+        the collected models read as near-constant predictors.
+        """
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(3, 24, 5, stride=2), nn.ELU(),
@@ -38,6 +50,7 @@ class PilotNetEncoder(nn.Module):
             nn.Conv2d(48, 64, 3, stride=1), nn.ELU(),
             nn.Conv2d(64, 64, 3, stride=1), nn.ELU(),
         )
+        self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.fc = nn.Linear(FLATTEN_WIDTH, feature_dim)
         self.feature_dim = feature_dim
 
@@ -53,7 +66,7 @@ class PilotNetEncoder(nn.Module):
         x = frames.reshape(B * T, *frames.shape[2:])
         x = self.conv(x).flatten(1)
         assert x.shape[1] == FLATTEN_WIDTH, f"flatten is {x.shape[1]}, expected {FLATTEN_WIDTH}"
-        return self.fc(x).reshape(B, T, self.feature_dim)
+        return self.fc(self.drop(x)).reshape(B, T, self.feature_dim)
 
 
 class TwoFrameEncoder(PilotNetEncoder):
@@ -62,8 +75,8 @@ class TwoFrameEncoder(PilotNetEncoder):
     MECHANISM for a null result -- if two frames is all the temporal signal there is, no
     recurrent architecture can beat it by much."""
 
-    def __init__(self, feature_dim=FEATURE_DIM):
-        super().__init__(feature_dim)
+    def __init__(self, feature_dim=FEATURE_DIM, dropout=0.0):
+        super().__init__(feature_dim, dropout=dropout)
         self.conv[0] = nn.Conv2d(6, 24, 5, stride=2)
 
     def forward(self, frames):
@@ -74,4 +87,4 @@ class TwoFrameEncoder(PilotNetEncoder):
         x = stacked.reshape(B * T, *stacked.shape[2:])
         x = self.conv(x).flatten(1)
         assert x.shape[1] == FLATTEN_WIDTH
-        return self.fc(x).reshape(B, T, self.feature_dim)
+        return self.fc(self.drop(x)).reshape(B, T, self.feature_dim)
