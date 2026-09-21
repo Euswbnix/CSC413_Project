@@ -1,0 +1,57 @@
+{
+  "n_frames": 63825,
+  "stored_hw": [
+    66,
+    240
+  ],
+  "model_w": 200,
+  "src_crop_rows": 256,
+  "median_dt_s": 0.056999921798706055,
+  "fps_measured": 17.54388371849838,
+  "has_timestamps": true,
+  "gap_seconds": 0.5,
+  "segments": [
+    [
+      0,
+      63825
+    ]
+  ],
+  "split_buffer": 300,
+  "split_fractions": [
+    0.6,
+    0.2,
+    0.2
+  ],
+  "splits": {
+    "train": [
+      0,
+      37995
+    ],
+    "val": [
+      38595,
+      50760
+    ],
+    "test": [
+      51360,
+      63825
+    ]
+  },
+  "missing_rows": [],
+  "n_label_dropouts": 973,
+  "label_dropout_file": "label_dropout.npy",
+  "target_mean_deg": 1.4602139240716443,
+  "target_std_deg": 31.08833544984239,
+  "pixel_mean": [
+    0.40240544080734253,
+    0.4561103880405426,
+    0.45885664224624634
+  ],
+  "pixel_std": [
+    0.23286683857440948,
+    0.2523241639137268,
+    0.2823750376701355
+  ],
+  "normalisation_scope": "train split only",
+  "dt_median_train_s": 0.056999921798706055,
+  "dt_norm_file": "dt_norm.npy"
+}

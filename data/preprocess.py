@@ -75,6 +75,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-root", type=pathlib.Path, required=True)
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("data/processed"))
+    ap.add_argument("--src-crop-rows", type=int, default=SRC_CROP_ROWS, metavar="N",
+                    help="how many rows UP FROM THE BOTTOM of the 455x256 source to keep "
+                         "before resizing into the stored 66x240. Default 150 reproduces "
+                         "every run collected so far. Larger values reach further up the "
+                         "frame toward the horizon; the stored tensor size never changes, "
+                         "so the encoder and its parameter count are untouched and the "
+                         "comparison isolates field of view from everything else.")
     ap.add_argument("--verify-gif", type=int, default=None, metavar="START_FRAME",
                     help="render 10 s from this frame with the true angle overlaid. The ONLY "
                          "check that catches a uniform frame/label off-by-one. PICK A CURVY "
@@ -98,7 +105,8 @@ def main():
             missing.append(i)
             continue
         img = Image.open(p).convert("RGB")
-        img = img.crop((0, img.height - SRC_CROP_ROWS, img.width, img.height))
+        top = max(0, img.height - args.src_crop_rows)
+        img = img.crop((0, top, img.width, img.height))
         frames[i] = np.asarray(img.resize((STORE_W, STORE_H), Image.BILINEAR), dtype=np.uint8)
         if (i + 1) % 10000 == 0:
             print(f"  {i+1}/{n}")
@@ -144,7 +152,7 @@ def main():
         "n_frames": n,
         "stored_hw": [STORE_H, STORE_W],
         "model_w": MODEL_W,
-        "src_crop_rows": SRC_CROP_ROWS,
+        "src_crop_rows": args.src_crop_rows,
         "median_dt_s": median_dt,
         "fps_measured": (1.0 / median_dt) if median_dt else None,
         "has_timestamps": stamps is not None,
