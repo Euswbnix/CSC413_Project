@@ -29,7 +29,7 @@ FEATURE_DIM = 32
 
 
 class PilotNetEncoder(nn.Module):
-    def __init__(self, feature_dim=FEATURE_DIM, dropout=0.0):
+    def __init__(self, feature_dim=FEATURE_DIM, dropout=0.0, feature_norm=False):
         """`dropout` defaults to 0.0, which reproduces every run collected so far.
 
         It exists because this encoder is 168,244 of the model's 193,141 parameters -- 87% --
@@ -53,6 +53,20 @@ class PilotNetEncoder(nn.Module):
         self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.fc = nn.Linear(FLATTEN_WIDTH, feature_dim)
         self.feature_dim = feature_dim
+        # Optional LayerNorm on the 32-d features that feed the recurrent cell, WITHOUT affine
+        # parameters, so the parameter count and the CfC/LSTM match are unchanged. Motivation
+        # (docs/training_review_2026-09-21.md section 2, re-measured on 128 clean validation
+        # frames): these features are unnormalised, their RMS grows from ~0.03 at init to ~8
+        # (CfC) and ~54 (LSTM) after training, and the first-step sigmoid gates end up 63% and
+        # 92% saturated. Default off reproduces every collected run.
+        if feature_norm:
+            self.norm = nn.LayerNorm(feature_dim, elementwise_affine=False)
+            # A parameter-free LayerNorm leaves no trace in the state_dict, so a checkpoint
+            # trained WITH it would load into a model built WITHOUT it and silently evaluate a
+            # different network. This buffer makes the mismatch a loud load error either way.
+            self.register_buffer("feature_norm_on", torch.ones(()))
+        else:
+            self.norm = nn.Identity()
 
     def forward(self, frames):
         """(B, T, 3, 66, 200) -> (B, T, feature_dim). Weights are shared across T by
@@ -66,7 +80,7 @@ class PilotNetEncoder(nn.Module):
         x = frames.reshape(B * T, *frames.shape[2:])
         x = self.conv(x).flatten(1)
         assert x.shape[1] == FLATTEN_WIDTH, f"flatten is {x.shape[1]}, expected {FLATTEN_WIDTH}"
-        return self.fc(self.drop(x)).reshape(B, T, self.feature_dim)
+        return self.norm(self.fc(self.drop(x))).reshape(B, T, self.feature_dim)
 
 
 class TwoFrameEncoder(PilotNetEncoder):
@@ -75,8 +89,8 @@ class TwoFrameEncoder(PilotNetEncoder):
     MECHANISM for a null result -- if two frames is all the temporal signal there is, no
     recurrent architecture can beat it by much."""
 
-    def __init__(self, feature_dim=FEATURE_DIM, dropout=0.0):
-        super().__init__(feature_dim, dropout=dropout)
+    def __init__(self, feature_dim=FEATURE_DIM, dropout=0.0, feature_norm=False):
+        super().__init__(feature_dim, dropout=dropout, feature_norm=feature_norm)
         self.conv[0] = nn.Conv2d(6, 24, 5, stride=2)
 
     def forward(self, frames):
@@ -87,4 +101,4 @@ class TwoFrameEncoder(PilotNetEncoder):
         x = stacked.reshape(B * T, *stacked.shape[2:])
         x = self.conv(x).flatten(1)
         assert x.shape[1] == FLATTEN_WIDTH
-        return self.fc(self.drop(x)).reshape(B, T, self.feature_dim)
+        return self.norm(self.fc(self.drop(x))).reshape(B, T, self.feature_dim)

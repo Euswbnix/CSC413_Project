@@ -175,7 +175,8 @@ class SteeringRegressor(nn.Module):
 ARMS = ("cfc", "lstm", "lstm_dt", "gru", "cnn_mlp", "cnn_linear", "cnn_2frame", "cnn_avg")
 
 
-def build_arm(name, hidden=HIDDEN, feature_dim=FEATURE_DIM, dropout=0.0, **cfc_kw):
+def build_arm(name, hidden=HIDDEN, feature_dim=FEATURE_DIM, dropout=0.0, feature_norm=False,
+              **cfc_kw):
     """Every arm's recurrent block is matched to the CfC's parameter count, except the two
     deliberate brackets (cnn_linear from below, and the CfC itself as the reference)."""
     target = cfc_params(feature_dim, hidden)          # 24,832 at I=32, H=64
@@ -197,8 +198,9 @@ def build_arm(name, hidden=HIDDEN, feature_dim=FEATURE_DIM, dropout=0.0, **cfc_k
     else:
         raise ValueError(f"unknown arm {name!r}; expected one of {ARMS}")
 
-    encoder = (TwoFrameEncoder(feature_dim, dropout=dropout) if name == "cnn_2frame"
-               else PilotNetEncoder(feature_dim, dropout=dropout))
+    encoder = (TwoFrameEncoder(feature_dim, dropout=dropout, feature_norm=feature_norm)
+               if name == "cnn_2frame"
+               else PilotNetEncoder(feature_dim, dropout=dropout, feature_norm=feature_norm))
 
     if name in ("cnn_mlp", "cnn_avg"):
         # Capacity-matched non-recurrent head: brackets the recurrent arms from ABOVE in

@@ -48,7 +48,8 @@ import torch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import metrics
-from data.dataset import SteeringData, train_batches, window_batches
+import diagnostics
+from data.dataset import center_crop, SteeringData, train_batches, window_batches
 from models.interface import build_arm
 
 FIXED = dict(optimizer="AdamW", weight_decay=1e-4, clip_grad_norm=1.0, batch_size=64,
@@ -161,6 +162,73 @@ def evaluate_windows(model, data, split, T, batch_size, fixed_dt):
     return metrics.summary(p, y, v), mse_std
 
 
+@torch.no_grad()
+def evaluate_train_subset(model, data, starts, T, batch_size, fixed_dt):
+    """Windowed evaluation on a FIXED subset of TRAIN windows, centre-cropped and NOT augmented.
+
+    Training loss is measured on augmented windows and validation on clean ones, so the two
+    are not on the same footing. This is the missing third number: the same clean protocol as
+    validation, on training data. If it improves while validation degrades, the model is
+    fitting the training road rather than failing to fit anything.
+    """
+    model.eval()
+    P, Y, V = [], [], []
+    for i in range(0, len(starts), batch_size):
+        b = data.gather(starts[i:i + batch_size], T)
+        dt = torch.ones_like(b.dt) if fixed_dt else b.dt
+        pred, _ = model(center_crop(b.frames, data.model_w), dt=dt)
+        P.append(pred.squeeze(-1).float().cpu())
+        Y.append(data.standardise(b.y).float().cpu())
+        V.append(b.valid.cpu())
+    model.train()
+    p = data.to_degrees(torch.cat(P)).numpy().ravel()
+    y = data.to_degrees(torch.cat(Y)).numpy().ravel()
+    v = torch.cat(V).numpy().ravel()
+    mse_std = float(((torch.cat(P) - torch.cat(Y)) ** 2 * torch.cat(V)).sum()
+                    / torch.cat(V).sum().clamp(min=1))
+    return metrics.summary(p, y, v), mse_std
+
+
+def run_name(args):
+    """Directory name for a run: every option that changes training and departs from its
+    default is part of it, so distinct configurations cannot share (and overwrite) a directory."""
+    return args.name or "_".join(
+        [args.arm, f"s{args.seed}", f"T{args.T}", f"lr{args.lr:g}", f"k{args.k:g}",
+         f"aug-{args.aug}"]
+        + (["fixeddt"] if args.fixed_dt else []) + (["shuf"] if args.shuffle_frames else [])
+        + (["BUGCTRL"] if args.per_frame_bug else [])
+        # Options added after the lab fleet. Each appears in the name only when it departs
+        # from the default, so every earlier run keeps its name -- and two runs that differ
+        # only in these options can no longer land in, and overwrite, the same directory.
+        + ([f"loss-{args.loss}"] if args.loss != "mse" else [])
+        + ([f"do{args.dropout:g}"] if args.dropout else [])
+        + ([f"wd{args.weight_decay:g}"] if args.weight_decay != FIXED["weight_decay"] else [])
+        + (["fn"] if args.feature_norm else [])
+        + ([f"elr{args.encoder_lr:g}"] if args.encoder_lr is not None else []))
+
+
+def make_optimizer(model, args):
+    """AdamW. One parameter group unless --encoder-lr is given, so the default path is exactly the
+    optimiser every collected run used."""
+    if args.encoder_lr is None:
+        return torch.optim.AdamW(model.parameters(), lr=args.lr,
+                                weight_decay=args.weight_decay)
+    else:
+        enc = set(id(q) for q in model.encoder.parameters())
+        return torch.optim.AdamW(
+            [{"params": list(model.encoder.parameters()), "lr": args.encoder_lr},
+             {"params": [q for q in model.parameters() if id(q) not in enc], "lr": args.lr}],
+            weight_decay=args.weight_decay)
+
+
+HEALTH_COLS = ["epoch", "feature_rms", "sigmoid_saturated_fraction", "tanh_saturated_fraction",
+               "grad_encoder", "grad_recurrent", "grad_readout", "grad_total", "clip_fraction",
+               "train_clean_macro_mae", "train_clean_mse_std", "train_clean_pred_std",
+               "train_clean_ccc", "train_clean_pearson_r",
+               "val_macro_mae", "val_mse_std", "val_pred_std", "val_ccc", "val_pearson_r",
+               "lr_encoder", "lr_rest"]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", required=True)
@@ -177,6 +245,17 @@ def main():
                          "every run collected so far. The encoder is 87%% of the parameters "
                          "and currently carries no regularisation at all, while train loss "
                          "falls 58%% and validation MSE nearly doubles over 30 epochs.")
+    ap.add_argument("--feature-norm", action="store_true",
+                    help="parameter-free LayerNorm on the encoder's 32-d output features. Off "
+                         "reproduces every collected run.")
+    ap.add_argument("--encoder-lr", type=float, default=None,
+                    help="separate learning rate for the CNN encoder; the recurrent block and "
+                         "readout keep --lr. Default: same as --lr (one parameter group).")
+    ap.add_argument("--health-every", type=int, default=1,
+                    help="log feature RMS, gate saturation, gradient norms and clean-train "
+                         "metrics to health.csv every N epochs; 0 disables")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing a run directory that already holds final_metrics.json")
     ap.add_argument("--weight-decay", type=float, default=FIXED["weight_decay"],
                     help="AdamW weight decay; default 1e-4 is what every collected run used")
     ap.add_argument("--loss", default="mse", choices=("mse", "bin-balanced"),
@@ -217,16 +296,16 @@ def main():
             raise SystemExit(3)
     set_determinism(args.seed)
 
-    name = args.name or "_".join(
-        [args.arm, f"s{args.seed}", f"T{args.T}", f"lr{args.lr:g}", f"k{args.k:g}",
-         f"aug-{args.aug}"]
-        + (["fixeddt"] if args.fixed_dt else []) + (["shuf"] if args.shuffle_frames else [])
-        + (["BUGCTRL"] if args.per_frame_bug else []))
+    name = run_name(args)
     run = pathlib.Path(args.runs) / name
+    if (run / "final_metrics.json").exists() and not args.overwrite:
+        print(f"refusing to overwrite finished run {run} (pass --overwrite to replace it)",
+              file=sys.stderr)
+        raise SystemExit(4)
     (run / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     data = SteeringData(args.processed, device=dev, pin=True)
-    model = build_arm(args.arm, dropout=args.dropout).to(dev)
+    model = build_arm(args.arm, dropout=args.dropout, feature_norm=args.feature_norm).to(dev)
     brk = model.param_breakdown()
     k_eff = args.k if args.aug == "full" else 0.0
     photo = args.aug != "none"
@@ -242,8 +321,7 @@ def main():
     print(f"[{name}] {brk['total']:,} params "
           f"(encoder {brk['encoder']:,} + recurrent {brk['recurrent']:,} + readout {brk['readout']})")
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr,
-                            weight_decay=args.weight_decay)
+    opt = make_optimizer(model, args)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     gen = torch.Generator(device=dev).manual_seed(args.seed + 9999)
 
@@ -253,9 +331,40 @@ def main():
     with csv_path.open("w", newline="") as fh:
         csv.writer(fh).writerow(cols)
 
+    health = args.health_every > 0
+    if health:
+        probe = diagnostics.probe_frames(data)
+        tr_starts = data.window_starts("train", args.T)
+        tr_starts = tr_starts[::max(1, len(tr_starts) // 2048)]
+        health_path = run / "health.csv"
+        with health_path.open("w", newline="") as fh:
+            csv.writer(fh).writerow(HEALTH_COLS)
+
+        def log_health(epoch, s_val, mse_val, grads):
+            g = diagnostics.gate_stats(model, probe)
+            st, mse_tr = evaluate_train_subset(model, data, tr_starts, args.T,
+                                               FIXED["batch_size"], args.fixed_dt)
+            nan = float("nan")
+            row = [epoch, g["feature_rms"], g.get("sigmoid_saturated_fraction", nan),
+                   g.get("tanh_saturated_fraction", nan),
+                   grads.get("grad_encoder", nan), grads.get("grad_recurrent", nan),
+                   grads.get("grad_readout", nan), grads.get("grad_total", nan),
+                   grads.get("clip_fraction", nan),
+                   st["macro_mae"], mse_tr, st["pred_std"], st["ccc"], st["pearson_r"],
+                   s_val["macro_mae"], mse_val, s_val["pred_std"], s_val["ccc"],
+                   s_val["pearson_r"], opt.param_groups[0]["lr"], opt.param_groups[-1]["lr"]]
+            with health_path.open("a", newline="") as fh:
+                csv.writer(fh).writerow(row)
+
+        s0, m0 = evaluate_windows(model, data, "val", args.T, FIXED["batch_size"], args.fixed_dt)
+        log_health(-1, s0, m0, {})          # epoch -1 = at initialisation, before any step
+
     best, best_epoch, history = -1e9, -1, []
     for epoch in range(args.epochs):
         t0, tot, nb = time.time(), 0.0, 0
+        gsum = {"grad_encoder": 0.0, "grad_recurrent": 0.0, "grad_readout": 0.0,
+                "grad_total": 0.0}
+        nclip = 0
         for step, b in enumerate(train_batches(
                 data, args.T, FIXED["batch_size"], k_deg_per_px=k_eff,
                 epoch_seed=args.seed * 1000 + epoch, per_frame_bug=args.per_frame_bug,
@@ -270,7 +379,14 @@ def main():
                     masked_bin_balanced_mse(pred, y, v, data.target_mean, data.target_std))
             opt.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), FIXED["clip_grad_norm"])
+            if health:
+                for key, val in diagnostics.group_grad_norms(model).items():
+                    gsum[key] += val
+            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(),
+                                                        FIXED["clip_grad_norm"])
+            if health:
+                gsum["grad_total"] += float(total_norm)
+                nclip += int(float(total_norm) > FIXED["clip_grad_norm"])
             opt.step()
             tot += loss.item(); nb += 1
             if args.max_steps and step + 1 >= args.max_steps:
@@ -284,6 +400,10 @@ def main():
         with csv_path.open("a", newline="") as fh:
             csv.writer(fh).writerow(row)
         history.append(s)
+        if health and (epoch % args.health_every == 0):
+            grads = {k: v / max(nb, 1) for k, v in gsum.items()}
+            grads["clip_fraction"] = nclip / max(nb, 1)
+            log_health(epoch, s, mse_std, grads)
         print(f"  epoch {epoch:2d}  loss {row[1]:.4f}  val skill {s['macro_skill']:+.4f}  "
               f"curve MAE {curve:6.2f}  global MAE {s['global_mae']:6.2f}  {row[-1]}s")
 

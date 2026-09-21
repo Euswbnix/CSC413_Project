@@ -54,12 +54,16 @@ def rollout_predictions(model, data, split, chunk, fixed_dt):
 
 
 @torch.no_grad()
-def windowed_predictions(model, data, split, T, batch_size):
-    """(n_windows, T) arrays with the state reset at every window start."""
+def windowed_predictions(model, data, split, T, batch_size, fixed_dt=False):
+    """(n_windows, T) arrays with the state reset at every window start.
+
+    `fixed_dt` must match training. It used to be missing here, so the per-position curve of
+    a fixed-dt run was computed with the real dt the model never saw, while the rollout
+    number beside it was right (docs/training_review_2026-09-21.md section 7)."""
     model.eval()
     P, Y, V = [], [], []
     for b in window_batches(data, split, T, batch_size):
-        pred, _ = model(b.frames, dt=b.dt)
+        pred, _ = model(b.frames, dt=torch.ones_like(b.dt) if fixed_dt else b.dt)
         P.append(pred.squeeze(-1).float().cpu())
         Y.append(b.y.float().cpu())
         V.append(b.valid.cpu())
@@ -82,7 +86,10 @@ def main():
     cfg = json.loads((args.run / "config.json").read_text())
     dev = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     data = SteeringData(args.processed, device=dev, pin=False)
-    model = build_arm(cfg["arm"]).to(dev)
+    # Rebuild exactly the trained architecture. The parameter-free LayerNorm leaves no weights
+    # of its own, so it is guarded by a buffer: a mismatch here fails loudly at load time.
+    model = build_arm(cfg["arm"], dropout=cfg.get("dropout", 0.0),
+                      feature_norm=cfg.get("feature_norm", False)).to(dev)
     ck = torch.load(args.run / "checkpoints" / args.checkpoint, map_location=dev)
     model.load_state_dict(ck["model"])
 
@@ -92,7 +99,7 @@ def main():
     s = metrics.summary(p, y, v, ref_constant=metrics.reference_constant(args.processed, "val"))
 
     T = cfg["T"]
-    wp, wy, wv = windowed_predictions(model, data, args.split, T, 64)
+    wp, wy, wv = windowed_predictions(model, data, args.split, T, 64, cfg.get("fixed_dt", False))
     curve = metrics.mae_by_window_position(wp, wy, wv, T)
 
     # The same weights, evaluated with the state severed before every step. No retraining:

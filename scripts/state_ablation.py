@@ -53,7 +53,8 @@ def main():
 
     cfg = json.loads((a.run / "config.json").read_text())
     data = SteeringData(a.processed, device=a.device)
-    model = build_arm(cfg["arm"]).to(a.device)
+    model = build_arm(cfg["arm"], dropout=cfg.get("dropout", 0.0),
+                      feature_norm=cfg.get("feature_norm", False)).to(a.device)
     ck = torch.load(a.run / "checkpoints" / "best.pt", map_location=a.device)
     model.load_state_dict(ck["model"])
     fdt = cfg.get("fixed_dt", False)
