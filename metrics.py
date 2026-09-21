@@ -93,7 +93,10 @@ def per_bin(pred, true, valid=None):
 
 
 def macro_skill(pred, true, valid=None):
-    """1 - mean over the PRIMARY bins of (MAE_model / MAE_predict0).
+    """1 - (mean over the PRIMARY bins of MAE_model) / (mean over those bins of MAE_predict0).
+
+    Note the order: the MAEs are averaged FIRST and the ratio taken once. This is not the
+    mean of per-bin ratios -- see the comment on the return statement for why they differ.
 
     Predict-0 scores exactly 0 by construction and the score cannot be won by shrinking
     predictions toward the mean, which is why this is the headline scalar and the quantity

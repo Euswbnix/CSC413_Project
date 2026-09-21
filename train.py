@@ -23,6 +23,16 @@ linear layers ran true fp32, an asymmetric precision difference inside the headl
 comparison.
 """
 
+import os
+
+# MUST precede `import torch`: torch.use_deterministic_algorithms(True) makes every cuBLAS
+# GEMM raise unless cuBLAS has been given a fixed workspace, and cuBLAS reads this variable
+# once, when CUDA initialises. Setting it later has no effect. Leaving it to the caller's
+# environment is what made determinism silently dependent on how the job was launched --
+# the fleet shells happened to export it, so the failure only appeared on a host that did
+# not. setdefault, so an explicitly chosen value still wins.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import argparse
 import csv
 import json
@@ -82,6 +92,40 @@ def masked_mse(pred, y, valid):
     return d.sum() / valid.sum().clamp(min=1)
 
 
+def masked_bin_balanced_mse(pred, y, valid, mean, std):
+    """Plain MSE, but with each PRIMARY bin contributing equally -- mirroring macro MAE.
+
+    Measured on the train split: the straight bin is 42.6% of frames and carries 0.3% of the
+    squared signal; the curve bin is 27.4% of frames and carries 96.7% (>=40 alone carries
+    86.0%). macro MAE, which is the reported metric AND the selection metric, weights the
+    three bins 1/3 each. So the objective and the yardstick have been measuring different
+    quantities, and the mismatch lands precisely on the straight bin -- 55-61% of the
+    evaluation frames, and the one bin where predict-0 is close to unbeatable.
+
+    This changes the OBJECTIVE to match the pre-registered metric. It does not touch the
+    metric. That direction matters: tuning the loss toward a metric fixed in advance is
+    ordinary practice, whereas moving the bin edges to flatter the model would be reversing
+    a pre-registered decision after seeing the results.
+
+    `y` arrives standardised, so the edges are converted rather than the labels. Bins absent
+    from a batch are dropped and the weights renormalised over those present, so the loss
+    stays an average over bins rather than silently reweighting toward whatever is on hand.
+    """
+    d = (pred.squeeze(-1) - y) ** 2 * valid
+    deg = y * std + mean
+    ay = deg.abs()
+    e0, e1 = metrics.BIN_EDGES[1], metrics.BIN_EDGES[2]   # 5.0, 15.0 -- [0] is 0.0
+    terms = []
+    for m in ((ay < e0), (ay >= e0) & (ay < e1), (ay >= e1)):
+        m = (m & valid.bool()).to(d.dtype)
+        n = m.sum()
+        if n > 0:
+            terms.append((d * m).sum() / n)
+    if not terms:
+        return d.sum() * 0.0
+    return torch.stack(terms).mean()
+
+
 def shuffle_within_windows(frames, y, valid, dt, gen):
     """Destroy frame ORDER inside each window, keeping the multiset of frames.
 
@@ -128,6 +172,9 @@ def main():
                     help="none = no augmentation; basic = flip+brightness+shadow, k=0; "
                          "full = basic + translation with steering compensation at k")
     ap.add_argument("--epochs", type=int, default=30)
+    ap.add_argument("--loss", default="mse", choices=("mse", "bin-balanced"),
+                    help="mse reproduces every run collected so far; bin-balanced weights "
+                         "the three primary bins equally, matching the reported metric")
     ap.add_argument("--fixed-dt", action="store_true", help="feed dt=1 everywhere (question 2)")
     ap.add_argument("--shuffle-frames", action="store_true", help="permute order at TRAIN time")
     ap.add_argument("--per-frame-bug", action="store_true",
@@ -212,7 +259,8 @@ def main():
             if args.fixed_dt:
                 dt = torch.ones_like(dt)
             pred, _ = model(f, dt=dt)
-            loss = masked_mse(pred, y, v)
+            loss = (masked_mse(pred, y, v) if args.loss == "mse" else
+                    masked_bin_balanced_mse(pred, y, v, data.target_mean, data.target_std))
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), FIXED["clip_grad_norm"])
