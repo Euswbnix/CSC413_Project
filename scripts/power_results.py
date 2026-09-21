@@ -110,6 +110,7 @@ def main():
     from scipy import stats
     rows, dups = collect()
     out = sorted(rows.values(), key=lambda r: (r["arm"], r["seed"]))
+    pathlib.Path("results").mkdir(exist_ok=True)
     with open("results/power_sweep_per_seed.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(out[0]))
         w.writeheader(); w.writerows(out)
@@ -206,7 +207,13 @@ def main():
     print("\n".join(lines))
     tests = {"test_macro_mae": m, "test_ccc": T["test_ccc"], "test_pearson_r": T["test_pearson_r"]}
 
-    import matplotlib
+    try:
+        import matplotlib
+    except ImportError:
+        # The 5090 host's environment has no matplotlib, and it serves other applications, so
+        # nothing is installed into it. The table is the result; the figure is optional.
+        print("\nmatplotlib not available: wrote the table and CSV, skipped the figure")
+        return
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.4))
@@ -236,6 +243,7 @@ def main():
         ax.set_xlim(-0.5, 1.6)
     fig.suptitle("CfC vs parameter-matched LSTM, one dot per seed; black = mean with 95% CI", fontsize=10)
     fig.tight_layout()
+    pathlib.Path("figures").mkdir(exist_ok=True)
     fig.savefig("figures/power_sweep.png", dpi=150)
     print("\nwrote results/power_sweep_per_seed.csv, results/power_sweep_summary.md, figures/power_sweep.png")
 
