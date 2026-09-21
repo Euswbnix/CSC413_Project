@@ -1,0 +1,83 @@
+{
+  "run": "cfc_s0_T16_lr0.003_k0.1_aug-full",
+  "arm": "cfc",
+  "seed": 0,
+  "split": "test",
+  "checkpoint": "best.pt",
+  "best_epoch": 10,
+  "n_frames": 12465,
+  "rollout": {
+    "macro_skill": 0.03537030448932943,
+    "macro_mae": 12.92367390153575,
+    "macro_mae_predict0": 13.397549299676095,
+    "global_mae": 7.885928630828857,
+    "pearson_r": NaN,
+    "constant_prediction": true,
+    "pred_std": 2.384185791015625e-07,
+    "false_alarm_rate": 0.0,
+    "n_valid": 12297,
+    "bins": {
+      "straight [0,5)": {
+        "n_frames": 6711,
+        "n_events": 43,
+        "mean_abs_true": 2.301598941590601,
+        "mae_model": 2.3279491929339327,
+        "mae_predict0": 2.301598941590601,
+        "mae_persistence": 0.2736373190339108,
+        "p95_abs_err": 6.445770025253296
+      },
+      "gentle [5,15)": {
+        "n_frames": 3812,
+        "n_events": 64,
+        "mean_abs_true": 9.035800155162311,
+        "mae_model": 8.1944971763825,
+        "mae_predict0": 9.035800155162311,
+        "mae_persistence": 0.4615267577726718,
+        "p95_abs_err": 13.305769681930542
+      },
+      "curve [15,inf)": {
+        "n_frames": 1774,
+        "n_events": 19,
+        "mean_abs_true": 28.855248802275373,
+        "mae_model": 28.248575335290816,
+        "mae_predict0": 28.855248802275373,
+        "mae_persistence": 1.1963641882749125,
+        "p95_abs_err": 110.0162369251251
+      },
+      "(diagnostic) >=40": {
+        "n_frames": 146,
+        "n_events": 2,
+        "mean_abs_true": 127.02589419116713,
+        "mae_model": 127.07536733313782,
+        "mae_predict0": 127.02589419116713,
+        "mae_persistence": 6.176918212681601,
+        "p95_abs_err": 225.51424908638
+      }
+    }
+  },
+  "mae_by_window_position": [
+    7.87964032679556,
+    7.880723938305875,
+    7.88180754981619,
+    7.882874878655522,
+    7.883893359496462,
+    7.8848703195322205,
+    7.885839138242192,
+    7.886334177279507,
+    7.887303074870664,
+    7.888255688484514,
+    7.889200160070887,
+    7.890144631657261,
+    7.8910720051257,
+    7.891999378594139,
+    7.8929267520625785,
+    7.893854125531018
+  ],
+  "position_delta_deg": -0.014213798735458028,
+  "params": {
+    "encoder": 168244,
+    "recurrent": 24832,
+    "readout": 65,
+    "total": 193141
+  }
+}

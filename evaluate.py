@@ -71,7 +71,7 @@ def windowed_predictions(model, data, split, T, batch_size):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run", type=pathlib.Path)
-    ap.add_argument("--split", default="test", choices=("val", "test"))
+    ap.add_argument("--split", default="test", choices=("train", "val", "test"))
     ap.add_argument("--checkpoint", default="best.pt")
     ap.add_argument("--chunk", type=int, default=256)
     ap.add_argument("--processed", default="data/processed")
