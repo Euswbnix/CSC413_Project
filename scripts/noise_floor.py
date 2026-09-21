@@ -51,39 +51,30 @@ def main():
     mv = np.concatenate([[np.inf], np.abs(np.diff(D, axis=0)).mean(1)])
     still = mv < np.percentile(mv[np.isfinite(mv)], 10)
 
-    pairs, sep_min = [], args.min_sep // args.stride
-    for a in range(0, len(idx), 256):
-        blk = D[a:a + 256] @ D.T
-        for r in range(blk.shape[0]):
-            i = a + r
-            j = np.flatnonzero((blk[r] > args.sim) & (np.abs(np.arange(len(idx)) - i) > sep_min))
-            for k in j[j > i]:
-                pairs.append((i, k))
-    if not pairs:
-        print(f"no pairs above similarity {args.sim} separated by {args.min_sep} frames")
-        return
-    pi = np.array([p[0] for p in pairs]); pj = np.array([p[1] for p in pairs])
-    dis = np.abs(ang[idx[pi]] - ang[idx[pj]])
-    moving = ~(still[pi] | still[pj])
-
-    print(f"\n{len(pairs)} near-duplicate pairs (similarity > {args.sim}, "
-          f">= {args.min_sep} frames apart)")
-    for name, m in (("all pairs", np.ones(len(dis), bool)), ("both frames moving", moving)):
-        if not m.any():
-            continue
-        v = dis[m]
-        print(f"  {name:20} n={m.sum():>6}  |dangle| median {np.median(v):6.2f}  "
-              f"mean {v.mean():6.2f}  p90 {np.percentile(v,90):6.2f}  max {v.max():6.2f}")
-
-    big = np.abs(ang[idx[pi]]) >= 15
-    if (big & moving).any():
-        v = dis[big & moving]
-        print(f"  {'pairs on a curve':20} n={(big&moving).sum():>6}  "
-              f"|dangle| median {np.median(v):6.2f}  mean {v.mean():6.2f}")
-        print(f"\n  => an image-only model cannot do better than about {v.mean()/2:.1f} deg MAE")
-        print(f"     on curve frames, because frames it cannot tell apart disagree by that much.")
-        print(f"     Our best curve-bin MAE so far: 25.1 deg (predict-0: 28.86).")
-
-
-if __name__ == "__main__":
-    main()
+    sep_min = args.min_sep // args.stride
+    print(f"\npair label disagreement as a function of appearance similarity")
+    print(f"(pairs at least {args.min_sep} raw frames apart; a single threshold gives too few")
+    print(f" pairs to be a measurement, so the TREND toward high similarity is the estimate)\n")
+    print(f"  {'sim >':>7} {'n pairs':>9} {'median':>8} {'mean':>8} {'p90':>8}  {'on curves: n':>13} {'mean':>7}")
+    for thr in (0.70, 0.75, 0.80, 0.85, 0.90, 0.95):
+        pi, pj = [], []
+        for a in range(0, len(idx), 256):
+            blk = D[a:a + 256] @ D.T
+            for r in range(blk.shape[0]):
+                i = a + r
+                j = np.flatnonzero((blk[r] > thr) & (np.arange(len(idx)) > i + sep_min))
+                pi.extend([i] * len(j)); pj.extend(j.tolist())
+        if len(pi) < 3:
+            print(f"  {thr:>7.2f} {len(pi):>9}   (too few)"); continue
+        pi = np.array(pi); pj = np.array(pj)
+        moving = ~(still[pi] | still[pj])
+        dis = np.abs(ang[idx[pi]] - ang[idx[pj]])[moving]
+        big = (np.abs(ang[idx[pi]]) >= 15)[moving]
+        cm = dis[big].mean() if big.any() else float("nan")
+        print(f"  {thr:>7.2f} {int(moving.sum()):>9} {np.median(dis):>8.2f} {dis.mean():>8.2f}"
+              f" {np.percentile(dis,90):>8.2f}  {int(big.sum()):>13} {cm:>7.2f}")
+    print("\n  Read the last column down the table. If it keeps falling as similarity rises,")
+    print("  the floor is below the last value; if it flattens, that plateau IS the floor.")
+    print("  Divide by two for a per-frame MAE bound -- the disagreement is between two frames,")
+    print("  and a model predicting their midpoint errs by half of it on each.")
+    print("\n  For reference: our best curve-bin MAE is 25.1 deg, predict-0 is 28.86.")
