@@ -78,3 +78,7 @@ def main():
     print("  Divide by two for a per-frame MAE bound -- the disagreement is between two frames,")
     print("  and a model predicting their midpoint errs by half of it on each.")
     print("\n  For reference: our best curve-bin MAE is 25.1 deg, predict-0 is 28.86.")
+
+
+if __name__ == "__main__":
+    main()
