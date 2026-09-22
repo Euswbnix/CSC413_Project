@@ -59,7 +59,7 @@ def windowed_predictions(model, data, split, T, batch_size, fixed_dt=False):
 
     `fixed_dt` must match training. It used to be missing here, so the per-position curve of
     a fixed-dt run was computed with the real dt the model never saw, while the rollout
-    number beside it was right (docs/training_review_2026-09-21.md section 7)."""
+    number beside it was right (docs/diagnosis_2026-09-20.md section 17.1)."""
     model.eval()
     P, Y, V = [], [], []
     for b in window_batches(data, split, T, batch_size):

@@ -55,7 +55,7 @@ class PilotNetEncoder(nn.Module):
         self.feature_dim = feature_dim
         # Optional LayerNorm on the 32-d features that feed the recurrent cell, WITHOUT affine
         # parameters, so the parameter count and the CfC/LSTM match are unchanged. Motivation
-        # (docs/training_review_2026-09-21.md section 2, re-measured on 128 clean validation
+        # (docs/diagnosis_2026-09-20.md section 18, measured on 128 clean validation
         # frames): these features are unnormalised, their RMS grows from ~0.03 at init to ~8
         # (CfC) and ~54 (LSTM) after training, and the first-step sigmoid gates end up 63% and
         # 92% saturated. Default off reproduces every collected run.

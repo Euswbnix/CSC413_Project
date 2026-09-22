@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Mechanism screen from docs/training_review_2026-09-21.md section 6, step 2:
+# Mechanism screen proposed by the independent review (docs/diagnosis_2026-09-20.md section 18;
+# results in section 17.2):
 #   CfC, seeds 0-2, {feature LayerNorm off/on} x {encoder lr 1e-3 / 1e-4}; recurrent block and
 #   readout stay at 1e-3; everything else is the pre-registered configuration.
 # All twelve runs train in ONE environment (this host, torch 2.8) -- including the untreated

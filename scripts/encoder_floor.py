@@ -6,13 +6,15 @@ different question: two frames a 17x60 thumbnail cannot separate may be perfectl
 at 66x240x3. That measurement bounds the floor from above and cannot settle it.
 
 This one uses a TRAINED ENCODER's own 32-d features as the descriptor. If two frames the
-encoder maps to nearly the same point carry very different steering angles, then that
-disagreement is irreducible FOR THIS MODEL -- the representation has thrown the distinction
-away, and no amount of recurrent machinery downstream can recover it.
+encoder maps to nearly the same point carry very different steering angles, the single-frame
+representation has largely lost that distinction. This is an indication, not a strict bound:
+nearly equal features are not identical ones, and a recurrent model also sees the neighbouring
+frames, so history can still separate the two (docs/diagnosis_2026-09-20.md section 18).
 
-Read the two together. If the floor stays high under the encoder's own features, the target
-is genuinely ambiguous given the input. If it drops sharply, the coarse measurement was an
-artefact of resolution and the headroom is real.
+Read the two together. If the figure stays high under the encoder's own features, this
+encoder's single-frame features do not separate those frames -- which may be the encoder's
+failure rather than ambiguity in the input, and history may still separate them. If it drops
+sharply, the coarse measurement was an artefact of resolution and the headroom is real.
 """
 
 import argparse
@@ -64,7 +66,7 @@ def main():
 
     sep = args.min_sep // args.stride
     print(f"\n  {'cos >':>7} {'n pairs':>9} {'median':>8} {'mean':>8}  "
-          f"{'on curves: n':>13} {'mean':>7} {'=> MAE bound':>13}")
+          f"{'on curves: n':>13} {'mean':>7} {'=> MAE ~':>13}")
     for thr in (0.90, 0.95, 0.98, 0.99, 0.995):
         pi, pj = [], []
         for a in range(0, len(idx), 512):
@@ -81,8 +83,9 @@ def main():
         cm = dis[big].mean() if big.any() else float("nan")
         print(f"  {thr:>7.3f} {len(pi):>9} {np.median(dis):>8.2f} {dis.mean():>8.2f}"
               f"  {int(big.sum()):>13} {cm:>7.2f} {cm/2:>13.2f}")
-    print("\n  The MAE bound is the curve-pair disagreement halved: a model predicting the")
-    print("  midpoint of two frames it cannot distinguish errs by half their gap on each.")
+    print("\n  The MAE figure is the curve-pair disagreement halved: a single-frame model predicting")
+    print("  the midpoint of two frames it cannot distinguish errs by half their gap on each. It is")
+    print("  an approximate single-frame indication, not a strict lower bound for the task.")
     print("  Our best curve-bin MAE is 25.1; predict-0 is 28.86.")
 
 
