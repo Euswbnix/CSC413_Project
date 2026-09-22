@@ -8,16 +8,17 @@ Per session:
   * steering-to-curvature slope (steering ratio x wheelbase), label at frame times
   * steering distribution at frame times, in the |y| bins used by metrics.py
 
-Dataset level: totals, and how far the TRN test sessions' GPS tracks are from any training
-track (the published split is supposed to be geographic).
+Dataset level: totals and a check that the TRN split's sessions are all in the release. Road
+overlap between splits is measured by geo_split_feasibility.py from the tracks written here.
 
-Writes <out>/sessions.csv and <out>/summary.json. Usage:
+Writes <out>/sessions.csv, <out>/summary.json and <out>/tracks_1hz.npz (server-only). Usage:
     python hdd/week1_checks.py --raw ~/data/hdd/raw --split trn_data_info.json --out ~/data/hdd/checks
 """
 import argparse
 import glob
 import json
 import os
+import sys
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -30,6 +31,18 @@ EARTH_R = 6_371_000.0
 
 FALLBACK_RATIO = float("nan")   # CAN speed units per m/s, for sessions without GPS
 
+
+
+def refuse_inside_git(path):
+    """HDD-derived outputs must never land in a git working tree (licence §4.b; this repo is public)."""
+    d = os.path.abspath(path if os.path.isdir(path) else os.path.dirname(path) or ".")
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            sys.exit(f"refusing to write HDD-derived output inside a git working tree ({d}); use ~/data/hdd/")
+        parent = os.path.dirname(d)
+        if parent == d:
+            return
+        d = parent
 
 def read(path, cols):
     """Read a headerless-after-'#' CSV, skipping the string columns (named iso/path)."""
@@ -63,17 +76,34 @@ def dt_stats(t):
     if d.size == 0:
         return {}
     med = float(np.median(d))
+    gap = d[d > 1.5 * med]
     return {
         "n": int(t.size), "span_s": float(t[-1] - t[0]), "median_dt": med,
         "p01_dt": float(np.percentile(d, 1)), "p99_dt": float(np.percentile(d, 99)),
         "max_dt": float(d.max()), "n_nonpos": int((d <= 0).sum()),
-        "n_gap_1p5x": int((d > 1.5 * med).sum()), "gap_time_s": float(d[d > 1.5 * med].sum()),
+        "n_gap_1p5x": int(gap.size),
+        # gap_time_s is the full length of the long intervals; missing_* subtracts the one
+        # normal interval each of them would have had anyway
+        "gap_time_s": float(gap.sum()), "missing_time_s": float((gap - med).sum()),
+        "missing_frames_est": int(np.round(gap / med).sum() - gap.size),
+        "n_gap_over_1s": int((d > 1.0).sum()),
     }
 
 
-def resample(t_src, v_src, t_dst):
+RATIO_OK = (3.4, 3.8)       # plausible CAN-speed / GPS-speed ratios (km/h over m/s)
+MAX_CAN_GAP = 0.05          # s; CAN is ~100 Hz, so at most 4 missing samples are bridged
+
+
+def resample(t_src, v_src, t_dst, max_gap=None):
+    """Linear interpolation, NaN outside the source range and, with max_gap, wherever the two
+    source samples around t_dst are further apart than max_gap: labels never bridge a gap."""
     ok = np.isfinite(v_src)
-    return np.interp(t_dst, t_src[ok], v_src[ok], left=np.nan, right=np.nan)
+    ts, vs = t_src[ok], v_src[ok]
+    out = np.interp(t_dst, ts, vs, left=np.nan, right=np.nan)
+    if max_gap is not None and ts.size > 1:
+        i = np.clip(np.searchsorted(ts, t_dst), 1, ts.size - 1)
+        out[(ts[i] - ts[i - 1]) > max_gap] = np.nan
+    return out
 
 
 def sign_agreement(a, b, mask):
@@ -115,9 +145,9 @@ def session(args):
     # everything on a common 10 Hz grid for the physics checks
     t0, t1 = max(ts[0], yaw["t"].iloc[0], vel["t"].iloc[0]), min(ts[-1], yaw["t"].iloc[-1], vel["t"].iloc[-1])
     g = np.arange(t0, t1, 0.1)
-    st = resample(ts, steer["angle"].to_numpy(float), g)
-    yw = resample(yaw["t"].to_numpy(float), yaw["yaw"].to_numpy(float), g)
-    v_can = resample(vel["t"].to_numpy(float), vel["v"].to_numpy(float), g)
+    st = resample(ts, steer["angle"].to_numpy(float), g, MAX_CAN_GAP)
+    yw = resample(yaw["t"].to_numpy(float), yaw["yaw"].to_numpy(float), g, MAX_CAN_GAP)
+    v_can = resample(vel["t"].to_numpy(float), vel["v"].to_numpy(float), g, MAX_CAN_GAP)
 
     pos_path = os.path.join(csv, "rtk_pos.csv")
     out["has_gps"] = os.path.exists(pos_path)
@@ -138,8 +168,14 @@ def session(args):
             vc = np.interp(g1[:-1] + 0.5, g, v_can)
             m = (v1 > MOVING) & np.isfinite(vc) & (vc > 0)
             out["speed_ratio_can_over_gps"] = float(np.median(vc[m] / v1[m])) if m.sum() > 30 else float("nan")
+            # a 1 Hz point is usable only if a steady-rate frame is within 0.5 s and the steering
+            # label there does not bridge a CAN gap
+            j = np.clip(np.searchsorted(tf_run, g1), 1, len(tf_run) - 1)
+            near_frame = np.minimum(np.abs(tf_run[j] - g1), np.abs(tf_run[j - 1] - g1)) <= 0.5
+            label_ok = np.isfinite(resample(ts, steer["angle"].to_numpy(float), g1, MAX_CAN_GAP))
             out["track_1hz"] = {"lat": np.interp(g1, tp, lat).round(6).tolist(),
-                                "lon": np.interp(g1, tp, lon).round(6).tolist()}
+                                "lon": np.interp(g1, tp, lon).round(6).tolist(),
+                                "valid": (near_frame & label_ok).astype(int).tolist()}
             out["lat0"], out["lon0"] = float(np.median(lat)), float(np.median(lon))
             # heading rate from the track itself (clockwise from north), independent of any
             # rtk_track column whose meaning is undocumented
@@ -151,11 +187,12 @@ def session(args):
             trk = read(trk_path, ["t", "iso", "course", "heading", "pitch", "roll"])
             for col in ("course", "heading"):
                 h = np.unwrap(np.radians(trk[col].to_numpy(float)))
-                hd_rate[col] = np.degrees(np.gradient(resample(trk["t"].to_numpy(float), h, g1)))
+                hd_rate[col] = np.degrees(np.gradient(resample(trk["t"].to_numpy(float), h, g1, MAX_CAN_GAP)))
     out["has_gps_track"] = hd_rate is not None
 
     ratio = out.get("speed_ratio_can_over_gps", float("nan"))
-    out["speed_ratio_source"] = "gps" if np.isfinite(ratio) and ratio > 0 else "fallback"
+    # a GPS ratio far from km/h (3.6) means the GPS track is broken (e.g. the 2017-06-08 sessions)
+    out["speed_ratio_source"] = "gps" if np.isfinite(ratio) and RATIO_OK[0] < ratio < RATIO_OK[1] else "fallback"
     if out["speed_ratio_source"] == "fallback":
         ratio = FALLBACK_RATIO           # nan leaves every speed-gated statistic empty
     v_ms = v_can / ratio
@@ -178,8 +215,8 @@ def session(args):
         out["corr_steer_vs_kappa"] = float(np.corrcoef(st[m], kappa[m])[0, 1])
 
     # steering distribution at steady frame times, split by moving / stopped
-    sf = resample(ts, steer["angle"].to_numpy(float), tf_run)
-    vf = resample(g, v_ms, tf_run)
+    sf = resample(ts, steer["angle"].to_numpy(float), tf_run, MAX_CAN_GAP)
+    vf = resample(g, v_ms, tf_run, 0.15)          # 10 Hz grid; NaN where CAN speed was missing
     a = np.abs(sf[np.isfinite(sf)])
     mv = np.isfinite(sf) & np.isfinite(vf) & (vf > MOVING)
     am = np.abs(sf[mv])
@@ -194,33 +231,6 @@ def session(args):
     return out
 
 
-def geo_overlap(rows, split):
-    from scipy.spatial import cKDTree
-    have = {r["session"]: r for r in rows if "track_1hz" in r}
-    lat0 = np.median([r["lat0"] for r in have.values()])
-    lon0 = np.median([r["lon0"] for r in have.values()])
-
-    def pts(ids):
-        xy = [np.column_stack(enu(np.array(have[s]["track_1hz"]["lat"]), np.array(have[s]["track_1hz"]["lon"]), lat0, lon0))
-              for s in ids if s in have]
-        return np.vstack(xy) if xy else np.zeros((0, 2))
-
-    train, test = split["train_session_set"], split["test_session_set"]
-    tree = cKDTree(pts(train))
-    res = {"train_with_gps": sum(s in have for s in train), "test_with_gps": sum(s in have for s in test)}
-    per = {}
-    for s in test:
-        if s not in have:
-            continue
-        d, _ = tree.query(pts([s]))
-        per[s] = {r: float((d < r).mean()) for r in (50, 200, 1000)}
-    for r in (50, 200, 1000):
-        res[f"test_points_within_{r}m_of_train"] = float(np.mean([p[r] for p in per.values()]))
-    res["test_sessions_mostly_on_train_roads"] = int(sum(p[50] > 0.5 for p in per.values()))
-    res["per_test_session_within_50m"] = {s: round(p[50], 3) for s, p in per.items()}
-    return res
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw", required=True)
@@ -230,6 +240,7 @@ def main():
     ap.add_argument("--fallback-ratio", type=float, default=float("nan"),
                     help="CAN speed units per m/s for sessions without GPS (read it off a first run)")
     a = ap.parse_args()
+    refuse_inside_git(a.out)
     os.makedirs(a.out, exist_ok=True)
 
     sessions = sorted(glob.glob(os.path.join(a.raw, "release_2019_07_08", "*", "[0-9]" * 12)))
@@ -242,12 +253,13 @@ def main():
 
     split = json.load(open(a.split))["HDD"]
     flat = pd.json_normalize([{k: v for k, v in r.items() if k != "track_1hz"} for r in rows], sep=".")
-    flat = flat.drop(columns=[c for c in flat.columns if c.endswith("hist_moving")])
+    flat = flat.drop(columns=[c for c in flat.columns if c.endswith("hist_moving") or c in ("lat0", "lon0")])
     flat.to_csv(os.path.join(a.out, "sessions.csv"), index=False)
 
     # 1 Hz GPS tracks for split design; server-only (the output directory is owner-only)
     np.savez_compressed(os.path.join(a.out, "tracks_1hz.npz"),
-                        **{r["session"]: np.column_stack([r["track_1hz"]["lat"], r["track_1hz"]["lon"]])
+                        **{r["session"]: np.column_stack([r["track_1hz"]["lat"], r["track_1hz"]["lon"],
+                                                          r["track_1hz"]["valid"]])
                            for r in rows if "track_1hz" in r})
     hist = np.sum([r["steer_frames"]["hist_moving"] for r in rows], axis=0)
     ids = {r["session"] for r in rows}
@@ -258,11 +270,15 @@ def main():
         "split": {"train": len(split["train_session_set"]), "test": len(split["test_session_set"]),
                   "in_release_not_in_split": sorted(ids - set(split["train_session_set"]) - set(split["test_session_set"])),
                   "in_split_not_in_release": sorted((set(split["train_session_set"]) | set(split["test_session_set"])) - ids)},
-        "geo": geo_overlap(rows, split),
         "steer_hist_moving": {"edges_deg": [-540, 540, 5], "counts": hist.tolist()},
     }
     json.dump(summary, open(os.path.join(a.out, "summary.json"), "w"), indent=1)
-    print(json.dumps({k: v for k, v in summary.items() if k != "steer_hist_moving"}, indent=1)[:4000])
+    # stdout carries counts only; session IDs stay in the server-side summary.json (one of them is
+    # not in TRN's public list)
+    printable = {k: v for k, v in summary.items() if k != "steer_hist_moving"}
+    printable["split"] = {k: (len(v) if isinstance(v, list) else v) for k, v in summary["split"].items()}
+    printable["sessions_without_frame_timestamps"] = len(missing)
+    print(json.dumps(printable, indent=1))
 
 
 if __name__ == "__main__":
