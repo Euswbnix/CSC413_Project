@@ -4,6 +4,10 @@ extract_features.py records, per frame, the horizontal image shift against the p
 turn moves the image sideways, so that shift should track the CAN yaw rate times the frame
 interval. Per 60 s window this reports the lag that best aligns the two on the ROS timeline.
 
+The default compares against the steering angle, which is what labels the frames. The CAN yaw
+rate trails the picture by about 0.1 s (gyro filtering), so timing labels against it invents a
+correction that is not there.
+
 Sign: lag > 0 means the image signal happens LATER than CAN says. A negative lag means the frame
 timestamps are later than the picture they carry, i.e. the camera path adds delay before the
 timestamp is taken.
@@ -20,7 +24,7 @@ So the estimate uses the per-frame signals and a Pearson correlation computed on
 samples only. Run --selftest after touching any of it.
 
     python hdd/sync_check.py --features ~/data/hdd/features/dinov2_s10 --raw ~/data/hdd/raw \
-        --out ~/data/hdd/checks/sync_check.json
+        --out ~/data/hdd/checks/sync_check.json --signal steer --max-lag-s 5
 """
 import argparse
 import glob
@@ -178,7 +182,7 @@ def main():
                     help="peak must beat the rest of the lag profile by this much")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--sessions", nargs="*", help="only these sessions")
-    ap.add_argument("--signal", choices=("yaw", "steer"), default="yaw",
+    ap.add_argument("--signal", choices=("steer", "yaw"), default="steer",
                     help="compare the image motion against the CAN yaw rate or the steering angle")
     a = ap.parse_args()
     if a.selftest:

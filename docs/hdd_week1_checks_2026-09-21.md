@@ -157,6 +157,11 @@ python hdd/geo_split_feasibility.py --tracks ~/data/hdd/checks/tracks_1hz.npz --
     --sessions-csv ~/data/hdd/checks/sessions.csv --exclude 201706081335 201706081445 201706081626 201706081707
 python hdd/drift_exclusion.py --raw ~/data/hdd/raw --checks ~/data/hdd/checks \
     --exclude 201706081335 201706081445 201706081626 201706081707
+python hdd/extract_features.py --videos ~/data/hdd/video --raw ~/data/hdd/raw \
+    --out ~/data/hdd/features/dinov2_s10 --stride 10 --workers 6
+python hdd/sync_check.py --features ~/data/hdd/features/dinov2_s10 --raw ~/data/hdd/raw \
+    --out ~/data/hdd/checks/sync_check.json --signal steer --max-lag-s 5
+python hdd/sync_check.py --features ~/data/hdd/features/dinov2_s10 --raw ~/data/hdd/raw --selftest
 ```
 
 - `trn_data_info.json` 来自 TRN.pytorch 仓库的 `data/data_info.json`。
