@@ -153,6 +153,47 @@ def describe(group, P, M, V, sess):
     return out
 
 
+def route_clusters(ids, P, M, r, cell, thr):
+    """Group sessions that drive the same roads: an edge when either session has more than `thr`
+    of its usable points within `r` of the other, then connected components. The held-out group in
+    design A is chosen for mutual overlap, so its sessions are not independent samples; this says
+    how many independent route groups it actually contains."""
+    k = int(np.ceil(r / cell))
+    off = np.array([(dx, dy) for dx in range(-k, k + 1) for dy in range(-k, k + 1)], dtype=np.int64)
+    key = lambda c: (c[:, 0] + (1 << 24)) * (1 << 25) + (c[:, 1] + (1 << 24))
+    cover, pts = {}, {}
+    for i, s in enumerate(ids):
+        c = np.floor(P[s] / cell).astype(np.int64)
+        for cl in np.unique(key((np.unique(c, axis=0)[:, None, :] + off[None]).reshape(-1, 2))):
+            cover.setdefault(cl, set()).add(i)
+        pts[i] = key(c[M[s]])
+    n = len(ids)
+    share = np.zeros((n, n))
+    for i in range(n):
+        if not len(pts[i]):
+            continue
+        counts = np.zeros(n)
+        for cl in pts[i]:
+            for j in cover.get(cl, ()):
+                counts[j] += 1
+        share[i] = counts / len(pts[i])
+    adj = (np.maximum(share, share.T) > thr) & ~np.eye(n, dtype=bool)
+    seen, comps = set(), []
+    for i in range(n):
+        if i in seen:
+            continue
+        stack, comp = [i], []
+        while stack:
+            v = stack.pop()
+            if v in seen:
+                continue
+            seen.add(v)
+            comp.append(v)
+            stack += list(np.flatnonzero(adj[v]))
+        comps.append(sorted(comp))
+    return comps, share
+
+
 def trn_overlap(P, M, split, r):
     tr = [s for s in split["train_session_set"] if s in P]
     te = [s for s in split["test_session_set"] if s in P]
@@ -237,6 +278,8 @@ def main():
     ap.add_argument("--blocks", type=float, nargs="+", default=[1000, 2000, 4000])
     ap.add_argument("--windows", type=int, nargs="+", default=[0, 2, 5], help="history, seconds")
     ap.add_argument("--draws", type=int, default=20)
+    ap.add_argument("--cluster-threshold", type=float, default=0.5,
+                    help="two sessions share a route group when either has this share of its points near the other")
     ap.add_argument("--json", help="also write the aggregates here")
     ap.add_argument("--sessions-csv", help="week1_checks sessions.csv, for the curve share")
     a = ap.parse_args()
@@ -327,6 +370,22 @@ def main():
                                 "test_within_r0_of_rest_min": float(rnd[:, 1].min())}
     print(f"E. random whole-session splits: test share {rnd[:, 0].mean():.3f}, test points within {r0:.0f} m of "
           f"train or val {rnd[:, 1].mean():.3f} (min {rnd[:, 1].min():.3f}) over {a.draws} draws")
+
+    # how many independent route groups the held-out sessions really are
+    comps, share = route_clusters(ids, P, M, r0, 25.0, a.cluster_threshold)
+    w = np.array([M[s].sum() for s in ids], float)
+    for name, group in (("test", test), ("val", val), ("all", ids)):
+        idx = [ids.index(s) for s in group]
+        sub = [[i for i in c if i in idx] for c in comps]
+        sub = [c for c in sub if c]
+        sizes = sorted((len(c) for c in sub), reverse=True)
+        cw = np.array([w[c].sum() for c in sub])
+        out.setdefault("B_route_clusters", {})[name] = {
+            "sessions": len(idx), "clusters": len(sub), "largest_clusters": sizes[:5],
+            "kish_clusters": round(kish(cw), 1),
+            "largest_cluster_share": round(float(cw.max() / cw.sum()), 3)}
+        print(f"    route clusters in {name}: {len(sub)} clusters over {len(idx)} sessions, "
+              f"largest {sizes[:5]}, Kish {kish(cw):.1f}, largest holds {cw.max() / cw.sum():.0%} of its data")
 
     if a.split:
         split = json.load(open(a.split))["HDD"]

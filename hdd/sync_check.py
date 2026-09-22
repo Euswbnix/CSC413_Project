@@ -172,7 +172,7 @@ def main():
     ap.add_argument("--features", required=True)
     ap.add_argument("--raw", required=True)
     ap.add_argument("--out")
-    ap.add_argument("--max-lag-s", type=float, default=2.0)
+    ap.add_argument("--max-lag-s", type=float, default=5.0)
     ap.add_argument("--min-corr", type=float, default=0.3)
     ap.add_argument("--min-sharpness", type=float, default=0.1,
                     help="peak must beat the rest of the lag profile by this much")
