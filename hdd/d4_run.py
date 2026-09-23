@@ -7,7 +7,8 @@ the mean macro MAE over the three conditions. Validation only; the test split is
 --split-name test, which the pre-registration allows exactly once, at the end.
 
 Features come from the shared cache (hdd/make_cache.py) through mmap, so running six of these at
-once costs one copy of the data, not six.
+once costs one copy of the data, not six. Every epoch is checkpointed under <out>/ckpt/ and a
+rerun of the same command resumes where it stopped, so a shutdown costs at most one epoch.
 
     python hdd/d4_run.py --cache ~/data/hdd/cache/dinov2_10hz --arm cfc --stage lr  --out ~/data/hdd/d4
     python hdd/d4_run.py --cache ~/data/hdd/cache/dinov2_10hz --arm cfc --stage final --seeds 0 1 --out ~/data/hdd/d4
@@ -199,14 +200,35 @@ def score_all(model, data, y, mu, sd, keeps, draws):
     return mean, per, preds
 
 
-def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim):
+def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
+    """Trains with a checkpoint after every epoch: a run that is killed (or a machine that is shut
+    down) resumes from the last finished epoch with the same model, optimiser and random streams,
+    so the result is the one an uninterrupted run would have given."""
     torch.manual_seed(seed)
     model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds).to(train_d.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
-    best, best_state, bad = np.inf, None, 0
-    for ep in range(args.epochs):
+    best, best_state, bad, start = np.inf, None, 0, 0
+    ckpt = os.path.join(args.out, "ckpt", f"{arm}_lr{lr:g}_s{seed}.pt")
+    if os.path.exists(ckpt):
+        # load on the CPU: RNG states must stay CPU byte tensors, and load_state_dict moves the
+        # weights and optimiser state onto the model's device by itself
+        c = torch.load(ckpt, map_location="cpu", weights_only=False)
+        model.load_state_dict(c["model"])
+        opt.load_state_dict(c["opt"])
+        rng.bit_generator.state = c["rng"]
+        gen.set_state(c["gen"])
+        torch.set_rng_state(c["torch_rng"])
+        if torch.cuda.is_available() and c.get("cuda_rng") is not None:
+            torch.cuda.set_rng_state(c["cuda_rng"])
+        best, best_state, bad, start = c["best"], c["best_state"], c["bad"], c["epoch"] + 1
+        print(f"[{tag}] resumed lr {lr:g} seed {seed} at epoch {start} (best {best:.3f}, patience used {bad})")
+        if bad >= args.patience or start >= args.epochs:
+            model.load_state_dict(best_state)
+            return model, best, start
+    ep = start - 1
+    for ep in range(start, args.epochs):
         model.train()
         for f, t, y in train_d.batches(args.batch, shuffle=True, rng=rng):
             keep = float(rng.choice(args.keep_rates))
@@ -220,8 +242,16 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim):
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad += 1
-            if bad >= args.patience:
-                break
+        print(f"[{tag}] lr {lr:g} seed {seed} epoch {ep + 1}: {mean:.3f} (best {best:.3f}, patience {bad}/{args.patience})")
+        os.makedirs(os.path.dirname(ckpt), exist_ok=True)
+        tmp = ckpt + ".tmp"
+        torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), rng=rng.bit_generator.state,
+                        gen=gen.get_state(), torch_rng=torch.get_rng_state(),
+                        cuda_rng=torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+                        best=best, best_state=best_state, bad=bad, epoch=ep), tmp)
+        os.replace(tmp, ckpt)                                   # never leave a half-written file
+        if bad >= args.patience:
+            break
     model.load_state_dict(best_state)
     return model, best, ep + 1
 
@@ -263,7 +293,7 @@ def main():
     rows = []
     if a.stage == "lr":
         for lr in a.lrs:
-            _, mean, eps = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim)
+            _, mean, eps = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim, tag)
             rows.append(dict(lr=lr, seed=a.seeds[0], mean_macro_mae=mean, epochs=eps))
             print(f"[{tag}] lr {lr:g}: mean over conditions {mean:.3f} ({eps} epochs)")
         best = min(rows, key=lambda r: r["mean_macro_mae"])["lr"]
@@ -274,7 +304,7 @@ def main():
         if not a.lr:
             sys.exit("--lr is required for the final stage")
         for seed in a.seeds:
-            model, mean, eps = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim)
+            model, mean, eps = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim, tag)
             _, per, preds = score_all(model, val_d, yva, mu, sd, a.keep_rates, a.mask_draws)
             np.savez_compressed(os.path.join(a.out, f"pred_{a.arm}_s{seed}_{a.split_name}.npz"),
                                 y=yva.astype(np.float32), cluster=val_d.clusters(),
@@ -287,7 +317,8 @@ def main():
                                for k, rows_ in per.items())
             print(f"[{tag}] seed {seed} ({eps} epochs): {summary}")
     for f in os.listdir(a.out):
-        os.chmod(os.path.join(a.out, f), 0o600)
+        if os.path.isfile(os.path.join(a.out, f)):
+            os.chmod(os.path.join(a.out, f), 0o600)
     print(f"[{tag}] done in {(time.perf_counter() - t0) / 60:.1f} min")
 
 
