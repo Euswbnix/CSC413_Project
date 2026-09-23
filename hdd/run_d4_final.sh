@@ -9,7 +9,8 @@ arm="$1"; shift
 lr=$("$PY" - "$arm" <<'PYEOF'
 import glob, json, sys
 arm = sys.argv[1]
-rows = [r for f in glob.glob(f"d4/dinov2/{arm}_lr_*.json") for r in json.load(open(f))["rows"]]
+# only the grid points ({arm}_lr_<rate>.json), not the summary this script writes
+rows = [r for f in glob.glob(f"d4/dinov2/{arm}_lr_[0-9]*.json") for r in json.load(open(f))["rows"]]
 if len(rows) != 4:
     sys.exit(f"{arm}: expected 4 grid points, found {len(rows)}")
 best = min(rows, key=lambda r: r["mean_macro_mae"])
