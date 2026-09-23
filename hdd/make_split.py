@@ -104,8 +104,8 @@ def main():
 
     hours = {s: float(M[s].sum()) / 3600 for s in ids}
     keep = [s for s in ids if split[s] == "train"]
-    lat0 = float(np.median(np.concatenate([np.load(a.tracks)[s][:, 0] for s in keep])))
-    lon0 = float(np.median(np.concatenate([np.load(a.tracks)[s][:, 1] for s in keep])))
+    # the tree lives in geo.load's frame, so the query points must use the same origin
+    lat0, lon0 = geo.origin(a.tracks, set(a.exclude) | set(a.drop))
     tree = cKDTree(np.vstack([P[s] for s in keep]))
 
     dists = {}

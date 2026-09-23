@@ -40,11 +40,19 @@ def refuse_inside_git(path):
             return
         d = parent
 
+def origin(path, exclude):
+    """The local frame every script must share: the median position over the loaded sessions.
+    Anything that queries a tree built by load() has to convert its own points with this."""
+    z = np.load(path)
+    ids = sorted(s for s in z.files if s not in exclude)
+    return (float(np.median(np.concatenate([z[s][:, 0] for s in ids]))),
+            float(np.median(np.concatenate([z[s][:, 1] for s in ids]))))
+
+
 def load(path, exclude):
     z = np.load(path)
     ids = sorted(s for s in z.files if s not in exclude)
-    lat0 = np.median(np.concatenate([z[s][:, 0] for s in ids]))
-    lon0 = np.median(np.concatenate([z[s][:, 1] for s in ids]))
+    lat0, lon0 = origin(path, exclude)
     P, M, V = {}, {}, {}
     for s in ids:
         ll = z[s]
