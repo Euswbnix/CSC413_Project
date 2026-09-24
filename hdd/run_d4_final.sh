@@ -26,7 +26,7 @@ PYEOF
 echo "$arm: chosen lr $lr"
 for group in "$@"; do
   nice -n 10 "$PY" -W ignore d4_run.py --cache cache/dinov2_10hz --arm "$arm" --stage final \
-      --lr "$lr" --seeds $group --out d4/dinov2 2>&1 | grep -v Warning &
+      --lr "$lr" --seeds $group --out d4/dinov2 2>&1 | grep --line-buffered -v Warning &
 done
 wait
 echo "$arm FINAL DONE"
