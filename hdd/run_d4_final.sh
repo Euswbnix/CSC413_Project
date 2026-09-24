@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Stage 2: eight seeds per arm at the rate the grid chose. Usage: run_d4_final.sh ARM "SEEDS" ["SEEDS" ...]
-# Each quoted group of seeds is one process; the groups run in parallel.
+# Each quoted group of seeds is one process; the groups run in parallel. Extra arguments for
+# d4_run.py (e.g. --ode-unfolds 24 for LTC) go in $D4_EXTRA_ARGS.
 umask 077
 cd "$HOME/data/hdd"
 export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/data/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
@@ -26,7 +27,7 @@ PYEOF
 echo "$arm: chosen lr $lr"
 for group in "$@"; do
   nice -n 10 "$PY" -W ignore d4_run.py --cache cache/dinov2_10hz --arm "$arm" --stage final \
-      --lr "$lr" --seeds $group --out d4/dinov2 2>&1 | grep --line-buffered -v Warning &
+      --lr "$lr" --seeds $group --out d4/dinov2 $D4_EXTRA_ARGS 2>&1 | grep --line-buffered -v Warning &
 done
 wait
 echo "$arm FINAL DONE"

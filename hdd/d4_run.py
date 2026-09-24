@@ -210,7 +210,8 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
     best, best_state, bad, start, diverged = np.inf, None, 0, 0, None
-    ckpt = os.path.join(args.out, "ckpt", f"{arm}_lr{lr:g}_s{seed}.pt")
+    unfolds = f"_u{args.ode_unfolds}" if arm == "ltc" else ""        # never mix solver settings
+    ckpt = os.path.join(args.out, "ckpt", f"{arm}_lr{lr:g}_s{seed}{unfolds}.pt")
     if os.path.exists(ckpt):
         # load on the CPU: RNG states must stay CPU byte tensors, and load_state_dict moves the
         # weights and optimiser state onto the model's device by itself
@@ -319,7 +320,8 @@ def main():
     if a.stage == "lr":
         for lr in a.lrs:
             _, mean, eps, div = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim, tag)
-            rows.append(dict(lr=lr, seed=a.seeds[0], mean_macro_mae=mean, epochs=eps, diverged=div))
+            rows.append(dict(lr=lr, seed=a.seeds[0], mean_macro_mae=mean, epochs=eps, diverged=div,
+                             ode_unfolds=a.ode_unfolds if a.arm == "ltc" else None))
             print(f"[{tag}] lr {lr:g}: mean over conditions {mean:.3f} ({eps} epochs)")
         best = min(rows, key=lambda r: r["mean_macro_mae"])["lr"]
         print(f"[{tag}] chosen lr {best:g}")
@@ -335,6 +337,7 @@ def main():
                                 y=yva.astype(np.float32), cluster=val_d.clusters(),
                                 session=val_d.sessions(), **preds)
             row = dict(arm=a.arm, seed=seed, lr=a.lr, epochs=eps, mean_macro_mae=mean, diverged=div,
+                       ode_unfolds=a.ode_unfolds if a.arm == "ltc" else None,
                        blocks=model.blocks(), conditions=per)
             json.dump(row, open(os.path.join(a.out, f"{a.arm}_s{seed}_{a.split_name}.json"), "w"), indent=1)
             rows.append(row)
