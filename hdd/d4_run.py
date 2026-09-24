@@ -209,7 +209,7 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
-    best, best_state, bad, start = np.inf, None, 0, 0
+    best, best_state, bad, start, diverged = np.inf, None, 0, 0, None
     ckpt = os.path.join(args.out, "ckpt", f"{arm}_lr{lr:g}_s{seed}.pt")
     if os.path.exists(ckpt):
         # load on the CPU: RNG states must stay CPU byte tensors, and load_state_dict moves the
@@ -223,20 +223,36 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
         if torch.cuda.is_available() and c.get("cuda_rng") is not None:
             torch.cuda.set_rng_state(c["cuda_rng"])
         best, best_state, bad, start = c["best"], c["best_state"], c["bad"], c["epoch"] + 1
+        diverged = c.get("diverged")
         print(f"[{tag}] resumed lr {lr:g} seed {seed} at epoch {start} (best {best:.3f}, patience used {bad})")
-        if bad >= args.patience or start >= args.epochs:
+        if diverged or bad >= args.patience or start >= args.epochs:
             model.load_state_dict(best_state)
-            return model, best, start
+            return model, best, start, diverged
     ep = start - 1
     for ep in range(start, args.epochs):
         model.train()
         for f, t, y in train_d.batches(args.batch, shuffle=True, rng=rng):
             keep = float(rng.choice(args.keep_rates))
             loss = ((forward_masked(model, f, t, keep, gen) - (y - mu) / sd) ** 2).mean()
+            if not torch.isfinite(loss):
+                diverged = f"non-finite training loss in epoch {ep + 1}"
+                break
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
+            if arm == "ltc":
+                # ncps 1.0.1 leaves w, sensory_w, cm and gleak unconstrained at run time unless the
+                # caller clips them after every optimiser step; without this they go negative and
+                # the ODE diverges (runs before 2026-09-23 hit NaN at epochs 10-15 this way)
+                model.rnn.cell.apply_weight_constraints()
+        if diverged:
+            print(f"[{tag}] lr {lr:g} seed {seed}: DIVERGED ({diverged}); keeping the best earlier state")
+            break
         mean, _, _ = score_all(model, val_d, y_val, mu, sd, args.keep_rates, 1)
+        if not np.isfinite(mean):
+            diverged = f"non-finite validation score in epoch {ep + 1}"
+            print(f"[{tag}] lr {lr:g} seed {seed}: DIVERGED ({diverged}); keeping the best earlier state")
+            break
         if mean < best - 1e-6:
             best, bad = mean, 0
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
@@ -248,12 +264,21 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
         torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), rng=rng.bit_generator.state,
                         gen=gen.get_state(), torch_rng=torch.get_rng_state(),
                         cuda_rng=torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-                        best=best, best_state=best_state, bad=bad, epoch=ep), tmp)
+                        best=best, best_state=best_state, bad=bad, epoch=ep, diverged=diverged), tmp)
         os.replace(tmp, ckpt)                                   # never leave a half-written file
         if bad >= args.patience:
             break
+    if diverged:
+        # persist the verdict so a resume does not train past the divergence
+        os.makedirs(os.path.dirname(ckpt), exist_ok=True)
+        torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), rng=rng.bit_generator.state,
+                        gen=gen.get_state(), torch_rng=torch.get_rng_state(),
+                        cuda_rng=torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
+                        best=best, best_state=best_state, bad=bad, epoch=ep, diverged=diverged), ckpt)
+    if best_state is None:
+        raise RuntimeError(f"{arm} lr {lr:g} seed {seed} diverged before any epoch finished: {diverged}")
     model.load_state_dict(best_state)
-    return model, best, ep + 1
+    return model, best, ep + 1, diverged
 
 
 def main():
@@ -293,8 +318,8 @@ def main():
     rows = []
     if a.stage == "lr":
         for lr in a.lrs:
-            _, mean, eps = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim, tag)
-            rows.append(dict(lr=lr, seed=a.seeds[0], mean_macro_mae=mean, epochs=eps))
+            _, mean, eps, div = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim, tag)
+            rows.append(dict(lr=lr, seed=a.seeds[0], mean_macro_mae=mean, epochs=eps, diverged=div))
             print(f"[{tag}] lr {lr:g}: mean over conditions {mean:.3f} ({eps} epochs)")
         best = min(rows, key=lambda r: r["mean_macro_mae"])["lr"]
         print(f"[{tag}] chosen lr {best:g}")
@@ -304,12 +329,12 @@ def main():
         if not a.lr:
             sys.exit("--lr is required for the final stage")
         for seed in a.seeds:
-            model, mean, eps = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim, tag)
+            model, mean, eps, div = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim, tag)
             _, per, preds = score_all(model, val_d, yva, mu, sd, a.keep_rates, a.mask_draws)
             np.savez_compressed(os.path.join(a.out, f"pred_{a.arm}_s{seed}_{a.split_name}.npz"),
                                 y=yva.astype(np.float32), cluster=val_d.clusters(),
                                 session=val_d.sessions(), **preds)
-            row = dict(arm=a.arm, seed=seed, lr=a.lr, epochs=eps, mean_macro_mae=mean,
+            row = dict(arm=a.arm, seed=seed, lr=a.lr, epochs=eps, mean_macro_mae=mean, diverged=div,
                        blocks=model.blocks(), conditions=per)
             json.dump(row, open(os.path.join(a.out, f"{a.arm}_s{seed}_{a.split_name}.json"), "w"), indent=1)
             rows.append(row)

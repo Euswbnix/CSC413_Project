@@ -13,7 +13,11 @@ arm = sys.argv[1]
 rows = [r for f in glob.glob(f"d4/dinov2/{arm}_lr_[0-9]*.json") for r in json.load(open(f))["rows"]]
 if len(rows) != 4:
     sys.exit(f"{arm}: expected 4 grid points, found {len(rows)}")
-best = min(rows, key=lambda r: r["mean_macro_mae"])
+# a grid point that diverged is not eligible, whatever its score before diverging
+ok = [r for r in rows if not r.get("diverged")]
+if not ok:
+    sys.exit(f"{arm}: every grid point diverged; no valid comparison (pre-registration section 6)")
+best = min(ok, key=lambda r: r["mean_macro_mae"])
 json.dump(dict(arm=arm, rows=sorted(rows, key=lambda r: -r["lr"]), chosen_lr=best["lr"]),
           open(f"d4/dinov2/{arm}_lr_chosen.json", "w"), indent=1)
 print(best["lr"])
