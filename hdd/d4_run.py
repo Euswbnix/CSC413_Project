@@ -106,19 +106,32 @@ class LTCBlock(nn.Module):
     `timespans[:, t].squeeze()` broadcast one sample's elapsed time onto another (ncps 1.0.1,
     PR #85). The reversal potentials are seeded per run instead of the library's fixed 1111."""
 
-    def __init__(self, hidden, seed, ode_unfolds=6):
+    def __init__(self, hidden, seed, ode_unfolds=6, compile_cell=False):
         super().__init__()
         from ncps.torch.ltc_cell import LTCCell
         from ncps.wirings import FullyConnected
         self.cell = LTCCell(FullyConnected(hidden, erev_init_seed=seed), in_features=hidden,
                             ode_unfolds=ode_unfolds)
         self.hidden = hidden
+        # The compiled cell wraps the same module and shares its parameters, but is kept out of
+        # the registered submodules so the state dict (and every checkpoint) stays identical.
+        # hdd/ltc_compile_check.py verifies it matches the eager cell to float precision.
+        # dynamic=True: the last batch of every session has its own size, and with static shapes
+        # each new size forces a recompilation until torch silently falls back to eager (which is
+        # what happened on the first attempt: 12 GB per process instead of well under 1 GB)
+        if compile_cell:
+            import torch._dynamo
+            torch._dynamo.config.recompile_limit = 64
+        step = torch.compile(self.cell, dynamic=True) if compile_cell else self.cell
+        object.__setattr__(self, "_step", step)
 
     def forward(self, x, dt):
         h = x.new_zeros(x.shape[0], self.hidden)
         out = []
         for i in range(x.shape[1]):
-            h, _ = self.cell(x[:, i], h, dt[:, i:i + 1].clamp(min=MIN_DT))
+            # contiguous slices: their strides would otherwise change with the window length and
+            # force a recompilation per length (and a silent fall-back to eager after eight)
+            h, _ = self._step(x[:, i].contiguous(), h, dt[:, i:i + 1].clamp(min=MIN_DT).contiguous())
             out.append(h)
         return torch.stack(out, 1)
 
@@ -126,13 +139,13 @@ class LTCBlock(nn.Module):
 class Arm(nn.Module):
     """Shared projection and readout; the recurrent block is the only difference."""
 
-    def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6):
+    def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False):
         super().__init__()
         self.kind = kind
         self.norm = nn.LayerNorm(dim, elementwise_affine=False)
         self.proj = nn.Linear(dim, hidden)
         self.rnn = (nn.LSTM(hidden + 1, hidden, batch_first=True) if kind == "lstm" else
-                    CfC(hidden, hidden) if kind == "cfc" else LTCBlock(hidden, seed, ode_unfolds))
+                    CfC(hidden, hidden) if kind == "cfc" else LTCBlock(hidden, seed, ode_unfolds, compile_ltc))
         self.head = nn.Linear(hidden, 1)
 
     def forward(self, f, dt, valid):
@@ -205,7 +218,8 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
     down) resumes from the last finished epoch with the same model, optimiser and random streams,
     so the result is the one an uninterrupted run would have given."""
     torch.manual_seed(seed)
-    model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds).to(train_d.device)
+    model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds,
+                compile_ltc=args.compile_ltc).to(train_d.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
@@ -299,6 +313,8 @@ def main():
     ap.add_argument("--patience", type=int, default=8)
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--ode-unfolds", type=int, default=6)
+    ap.add_argument("--compile-ltc", action="store_true",
+                    help="torch.compile the LTC cell (same maths; checked by ltc_compile_check.py)")
     ap.add_argument("--max-step", type=float, default=0.2)
     ap.add_argument("--tag", default="", help="suffix for the output files, so parallel runs do not collide")
     a = ap.parse_args()
