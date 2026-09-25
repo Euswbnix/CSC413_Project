@@ -71,3 +71,6 @@ sessions.csv
 summary.json
 *hdd*.csv
 *hdd*.json
+
+# SwanLab logs (console output of HDD runs included): never in the repo
+swanlog/

@@ -25,6 +25,7 @@ import torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import metrics
+import tracking
 
 MOVING = 3.0
 
@@ -162,7 +163,7 @@ def evaluate(model, data, mu, sd, keep_rate, seed):
     return np.concatenate(preds).astype(np.float64), np.concatenate(ys).astype(np.float64)
 
 
-def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim):
+def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim, run=tracking.Off()):
     torch.manual_seed(seed)
     model = (LSTMdt(dim) if kind == "lstm" else FrameMLP(dim)).to(train.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
@@ -170,9 +171,12 @@ def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim)
     best, best_state, bad = np.inf, None, 0
     for ep in range(epochs):
         model.train()
+        loss_sum, n_batches = torch.zeros((), device=train.device), 0
         for f, t, y, _ in train.batches(batch, shuffle=True, rng=rng):
             mask = torch.ones_like(t, dtype=torch.bool)
             loss = ((run_lstm(model, f, t, mask) - (y - mu) / sd) ** 2).mean()
+            loss_sum += loss.detach()
+            n_batches += 1
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -183,10 +187,17 @@ def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim)
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad += 1
-            if bad >= patience:
-                break
+        run.log({"val/macro_mae": score, "val/best_macro_mae": best, "train/patience_used": bad,
+                 "train/loss": loss_sum.item() / max(n_batches, 1)}, step=ep + 1)
+        if bad >= patience:
+            break
     model.load_state_dict(best_state)
     return model, best, ep + 1
+
+
+def open_run(a, project, name, group, tags, **extra):
+    """One SwanLab run per train_once call; these scripts keep no checkpoints, so none resume."""
+    return tracking.start(a.swanlab, project, name, config=dict(vars(a), **extra), group=group, tags=tags)
 
 
 def main():
@@ -202,6 +213,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--patience", type=int, default=5)
     ap.add_argument("--batch", type=int, default=256)
+    tracking.add_argument(ap)
     a = ap.parse_args()
     refuse_inside_git(a.out)
     os.makedirs(a.out, exist_ok=True)
@@ -223,18 +235,28 @@ def main():
     for kind in ("mlp", "lstm"):
         runs = []
         for lr in a.lrs:
-            _, score, eps = train_once(kind, train, val, lr, a.seeds[0], a.epochs, a.patience, a.batch, mu, sd, dim)
+            run = open_run(a, "CSC413-D3", f"{kind}_lrsearch_lr{lr:g}_s{a.seeds[0]}", f"{kind}_lr_search",
+                           [kind, "lr_search", f"lr{lr:g}", f"seed{a.seeds[0]}"], kind=kind,
+                           stage="lr_search", lr=lr, seed=a.seeds[0])
+            _, score, eps = train_once(kind, train, val, lr, a.seeds[0], a.epochs, a.patience, a.batch, mu, sd, dim, run)
+            run.finish()
             runs.append(dict(lr=lr, val_macro_mae=score, epochs=eps))
             print(f"  {kind} lr {lr:g}: val macro MAE {score:.3f} ({eps} epochs)")
         best_lr = min(runs, key=lambda r: r["val_macro_mae"])["lr"]
         finals = []
         for seed in a.seeds:
-            model, score, eps = train_once(kind, train, val, best_lr, seed, a.epochs, a.patience, a.batch, mu, sd, dim)
+            run = open_run(a, "CSC413-D3", f"{kind}_final_lr{best_lr:g}_s{seed}", f"{kind}_final",
+                           [kind, "final", f"lr{best_lr:g}", f"seed{seed}"], kind=kind, stage="final",
+                           lr=best_lr, seed=seed)
+            model, score, eps = train_once(kind, train, val, best_lr, seed, a.epochs, a.patience, a.batch, mu, sd, dim, run)
             row = dict(seed=seed, lr=best_lr, epochs=eps, conditions={})
             for keep in (a.keep_rates if kind == "lstm" else [1.0]):
                 pred, y = evaluate(model, val, mu, sd, keep, seed)
                 row["conditions"][f"keep_{keep:g}"] = dict(
                     macro_mae=metrics.macro_mae(pred, y), ccc=metrics.ccc(pred, y))
+            run.log({f"final/keep{round(float(k.split('_', 1)[1]) * 100)}/{m}": v[m]
+                     for k, v in row["conditions"].items() for m in ("macro_mae", "ccc")}, step=eps)
+            run.finish()
             finals.append(row)
             cond = " ".join(f"{k} {v['macro_mae']:.3f}/{v['ccc']:+.2f}" for k, v in row["conditions"].items())
             print(f"  {kind} seed {seed} (lr {best_lr:g}, {eps} epochs): {cond}")

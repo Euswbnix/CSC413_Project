@@ -27,10 +27,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import metrics
+import tracking
 from models.cfc import CfC
 
 MOVING = 3.0
 MIN_DT = 1e-3          # never feed dt = 0 to the LTC solver
+PROJECT = "CSC413-D4"  # SwanLab project; one run per checkpoint (arm, rate, seed, solver steps)
+CODE_SHA256 = __import__("hashlib").sha256(open(__file__, "rb").read()).hexdigest()
 
 
 def refuse_inside_git(path):
@@ -213,19 +216,45 @@ def score_all(model, data, y, mu, sd, keeps, draws):
     return mean, per, preds
 
 
+def condition_metrics(per, prefix):
+    """{prefix}/keep100/macro_mae ... from score_all's per-condition rows (mean over mask draws)."""
+    out = {}
+    for key, rows in per.items():
+        pct = round(float(key.split("_", 1)[1]) * 100)
+        out[f"{prefix}/keep{pct}/macro_mae"] = np.mean([r["macro_mae"] for r in rows])
+        out[f"{prefix}/keep{pct}/ccc"] = np.mean([r["ccc"] for r in rows])
+    return out
+
+
+def open_run(args, arm, lr, seed, run_id, ckpt, n_train, n_val):
+    unfolds = f"_u{args.ode_unfolds}" if arm == "ltc" else ""
+    name = f"{arm}_lr{lr:g}_s{seed}{unfolds}"
+    config = dict(vars(args), arm=arm, lr=lr, seed=seed, checkpoint=os.path.abspath(ckpt),
+                  train_windows=n_train, val_windows=n_val, code_sha256=CODE_SHA256,
+                  torch=torch.__version__)
+    return tracking.start(args.swanlab, PROJECT, name, config=config, group=f"{arm}{unfolds}",
+                          tags=[arm, f"lr{lr:g}", f"seed{seed}"],
+                          run_id=run_id or tracking.new_run_id(name))
+
+
 def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
     """Trains with a checkpoint after every epoch: a run that is killed (or a machine that is shut
     down) resumes from the last finished epoch with the same model, optimiser and random streams,
-    so the result is the one an uninterrupted run would have given."""
+    so the result is the one an uninterrupted run would have given.
+
+    Returns the SwanLab run still open (the caller logs the final evaluation and finishes it). Its
+    id is kept in the checkpoint, so a resumed run continues the same chart. Metrics are logged
+    only after the epoch's checkpoint is on disk."""
     torch.manual_seed(seed)
     model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds,
                 compile_ltc=args.compile_ltc).to(train_d.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
-    best, best_state, bad, start, diverged = np.inf, None, 0, 0, None
+    best, best_state, bad, start, diverged, run_id = np.inf, None, 0, 0, None, None
     unfolds = f"_u{args.ode_unfolds}" if arm == "ltc" else ""        # never mix solver settings
     ckpt = os.path.join(args.out, "ckpt", f"{arm}_lr{lr:g}_s{seed}{unfolds}.pt")
+    sizes = (train_d.n, len(y_val))
     if os.path.exists(ckpt):
         # load on the CPU: RNG states must stay CPU byte tensors, and load_state_dict moves the
         # weights and optimiser state onto the model's device by itself
@@ -239,19 +268,30 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
             torch.cuda.set_rng_state(c["cuda_rng"])
         best, best_state, bad, start = c["best"], c["best_state"], c["bad"], c["epoch"] + 1
         diverged = c.get("diverged")
+        run_id = c.get("swanlab_id")
         print(f"[{tag}] resumed lr {lr:g} seed {seed} at epoch {start} (best {best:.3f}, patience used {bad})")
         if diverged or bad >= args.patience or start >= args.epochs:
             model.load_state_dict(best_state)
-            return model, best, start, diverged
+            # a finished run needs a tracker only to receive the final evaluation
+            run = (open_run(args, arm, lr, seed, run_id, ckpt, *sizes) if args.stage == "final"
+                   else tracking.Off())
+            return model, best, start, diverged, run
+    run_id = run_id or tracking.new_run_id(f"{arm}_lr{lr:g}_s{seed}{unfolds}")
+    run = open_run(args, arm, lr, seed, run_id, ckpt, *sizes)
     ep = start - 1
     for ep in range(start, args.epochs):
         model.train()
+        t_ep, loss_sum, n_batches = time.perf_counter(), torch.zeros((), device=train_d.device), 0
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         for f, t, y in train_d.batches(args.batch, shuffle=True, rng=rng):
             keep = float(rng.choice(args.keep_rates))
             loss = ((forward_masked(model, f, t, keep, gen) - (y - mu) / sd) ** 2).mean()
             if not torch.isfinite(loss):
                 diverged = f"non-finite training loss in epoch {ep + 1}"
                 break
+            loss_sum += loss.detach()                  # summed on the device: no extra sync
+            n_batches += 1
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -263,7 +303,7 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
         if diverged:
             print(f"[{tag}] lr {lr:g} seed {seed}: DIVERGED ({diverged}); keeping the best earlier state")
             break
-        mean, _, _ = score_all(model, val_d, y_val, mu, sd, args.keep_rates, 1)
+        mean, per, _ = score_all(model, val_d, y_val, mu, sd, args.keep_rates, 1)
         if not np.isfinite(mean):
             diverged = f"non-finite validation score in epoch {ep + 1}"
             print(f"[{tag}] lr {lr:g} seed {seed}: DIVERGED ({diverged}); keeping the best earlier state")
@@ -279,8 +319,15 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
         torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), rng=rng.bit_generator.state,
                         gen=gen.get_state(), torch_rng=torch.get_rng_state(),
                         cuda_rng=torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-                        best=best, best_state=best_state, bad=bad, epoch=ep, diverged=diverged), tmp)
+                        best=best, best_state=best_state, bad=bad, epoch=ep, diverged=diverged,
+                        swanlab_id=run_id), tmp)
         os.replace(tmp, ckpt)                                   # never leave a half-written file
+        run.log({"val/mean_macro_mae": mean, "val/best_mean_macro_mae": best,
+                 "train/loss": loss_sum.item() / max(n_batches, 1), "train/patience_used": bad,
+                 "time/epoch_min": (time.perf_counter() - t_ep) / 60,
+                 "gpu/peak_alloc_gb": (torch.cuda.max_memory_allocated() / 2 ** 30
+                                       if torch.cuda.is_available() else None),
+                 **condition_metrics(per, "val")}, step=ep + 1)
         if bad >= args.patience:
             break
     if diverged:
@@ -289,11 +336,13 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
         torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), rng=rng.bit_generator.state,
                         gen=gen.get_state(), torch_rng=torch.get_rng_state(),
                         cuda_rng=torch.cuda.get_rng_state() if torch.cuda.is_available() else None,
-                        best=best, best_state=best_state, bad=bad, epoch=ep, diverged=diverged), ckpt)
+                        best=best, best_state=best_state, bad=bad, epoch=ep, diverged=diverged,
+                        swanlab_id=run_id), ckpt)
+        run.log({"train/diverged": 1}, step=ep + 1)
     if best_state is None:
         raise RuntimeError(f"{arm} lr {lr:g} seed {seed} diverged before any epoch finished: {diverged}")
     model.load_state_dict(best_state)
-    return model, best, ep + 1, diverged
+    return model, best, ep + 1, diverged, run
 
 
 def main():
@@ -317,6 +366,7 @@ def main():
                     help="torch.compile the LTC cell (same maths; checked by ltc_compile_check.py)")
     ap.add_argument("--max-step", type=float, default=0.2)
     ap.add_argument("--tag", default="", help="suffix for the output files, so parallel runs do not collide")
+    tracking.add_argument(ap)
     a = ap.parse_args()
     refuse_inside_git(a.out)
     os.makedirs(a.out, exist_ok=True)
@@ -335,7 +385,8 @@ def main():
     rows = []
     if a.stage == "lr":
         for lr in a.lrs:
-            _, mean, eps, div = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim, tag)
+            _, mean, eps, div, run = train(a.arm, train_d, val_d, yva, lr, a.seeds[0], a, mu, sd, dim, tag)
+            run.finish()
             rows.append(dict(lr=lr, seed=a.seeds[0], mean_macro_mae=mean, epochs=eps, diverged=div,
                              ode_unfolds=a.ode_unfolds if a.arm == "ltc" else None))
             print(f"[{tag}] lr {lr:g}: mean over conditions {mean:.3f} ({eps} epochs)")
@@ -347,8 +398,11 @@ def main():
         if not a.lr:
             sys.exit("--lr is required for the final stage")
         for seed in a.seeds:
-            model, mean, eps, div = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim, tag)
-            _, per, preds = score_all(model, val_d, yva, mu, sd, a.keep_rates, a.mask_draws)
+            model, mean, eps, div, run = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim, tag)
+            final_mean, per, preds = score_all(model, val_d, yva, mu, sd, a.keep_rates, a.mask_draws)
+            run.log({f"final_{a.split_name}/mean_macro_mae": final_mean,
+                     **condition_metrics(per, f"final_{a.split_name}")}, step=eps)
+            run.finish()
             np.savez_compressed(os.path.join(a.out, f"pred_{a.arm}_s{seed}_{a.split_name}.npz"),
                                 y=yva.astype(np.float32), cluster=val_d.clusters(),
                                 session=val_d.sessions(), **preds)

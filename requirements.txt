@@ -21,3 +21,5 @@ gdown==6.4.0
 
 # The Mac development box runs torch 2.8.0 / numpy 2.0.2 on CPU and the suite passes there
 # too; the pins above describe the environment that produced the reported results.
+# Optional, not installed by this file: swanlab==0.7.15 for experiment tracking (tracking.py).
+# Every training script runs untracked without it; --swanlab off skips it explicitly.

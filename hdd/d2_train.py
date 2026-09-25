@@ -21,6 +21,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import metrics
+import tracking
 
 MOVING = 3.0
 
@@ -61,7 +62,7 @@ def load_split(features, split_dir, which):
             np.array(sess), np.concatenate(dist), info)
 
 
-def train_once(Xtr, ytr, Xva, yva, lr, seed, epochs, patience, batch, device):
+def train_once(Xtr, ytr, Xva, yva, lr, seed, epochs, patience, batch, device, run=tracking.Off()):
     import torch
     import torch.nn as nn
     torch.manual_seed(seed)
@@ -77,9 +78,12 @@ def train_once(Xtr, ytr, Xva, yva, lr, seed, epochs, patience, batch, device):
     for ep in range(epochs):
         head.train()
         perm = torch.randperm(len(xt), device=device)
+        loss_sum, n_batches = torch.zeros((), device=device), 0
         for i in range(0, len(perm), batch):
             j = perm[i:i + batch]
             loss = ((head(xt[j].float()).squeeze(-1) - tt[j]) ** 2).mean()
+            loss_sum += loss.detach()
+            n_batches += 1
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -92,9 +96,16 @@ def train_once(Xtr, ytr, Xva, yva, lr, seed, epochs, patience, batch, device):
             best, best_pred, bad = score, pred, 0
         else:
             bad += 1
-            if bad >= patience:
-                break
+        run.log({"val/macro_mae": score, "val/best_macro_mae": best, "train/patience_used": bad,
+                 "train/loss": loss_sum.item() / max(n_batches, 1)}, step=ep + 1)
+        if bad >= patience:
+            break
     return best, best_pred, ep + 1
+
+
+def open_run(a, project, name, group, tags, **extra):
+    """One SwanLab run per train_once call; these scripts keep no checkpoints, so none resume."""
+    return tracking.start(a.swanlab, project, name, config=dict(vars(a), **extra), group=group, tags=tags)
 
 
 def report(pred, y, sess, dist, c_val, c_train):
@@ -126,6 +137,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--patience", type=int, default=5)
     ap.add_argument("--batch", type=int, default=4096)
+    tracking.add_argument(ap)
     a = ap.parse_args()
     refuse_inside_git(a.out)
     os.makedirs(a.out, exist_ok=True)
@@ -144,8 +156,12 @@ def main():
           f"fitted on val {c_val:+.3f} deg ({metrics.macro_mae(np.full_like(yva, c_val), yva):.3f})")
 
     runs, t0 = [], time.perf_counter()
+    group = os.path.basename(os.path.normpath(a.features))           # which encoder's features
     for lr in a.lrs:
-        score, pred, eps = train_once(Xtr, ytr, Xva, yva, lr, a.seeds[0], a.epochs, a.patience, a.batch, device)
+        run = open_run(a, "CSC413-D2", f"head_lrsearch_lr{lr:g}_s{a.seeds[0]}", group,
+                       ["lr_search", f"lr{lr:g}", f"seed{a.seeds[0]}"], stage="lr_search", lr=lr, seed=a.seeds[0])
+        score, pred, eps = train_once(Xtr, ytr, Xva, yva, lr, a.seeds[0], a.epochs, a.patience, a.batch, device, run)
+        run.finish()
         runs.append(dict(stage="lr_search", lr=lr, seed=a.seeds[0], epochs=eps, val_macro_mae=score))
         print(f"  lr {lr:g}: val macro MAE {score:.3f} after {eps} epochs")
     best_lr = min(runs, key=lambda r: r["val_macro_mae"])["lr"]
@@ -153,9 +169,14 @@ def main():
 
     finals = []
     for seed in a.seeds:
-        score, pred, eps = train_once(Xtr, ytr, Xva, yva, best_lr, seed, a.epochs, a.patience, a.batch, device)
+        run = open_run(a, "CSC413-D2", f"head_final_lr{best_lr:g}_s{seed}", group,
+                       ["final", f"lr{best_lr:g}", f"seed{seed}"], stage="final", lr=best_lr, seed=seed)
+        score, pred, eps = train_once(Xtr, ytr, Xva, yva, best_lr, seed, a.epochs, a.patience, a.batch, device, run)
         r = report(pred, yva, sva, dva, c_val, c_train)
         r.update(seed=seed, lr=best_lr, epochs=eps)
+        run.log({f"final/{k}": r[k] for k in ("macro_mae", "ccc", "skill_vs_val_constant",
+                                               "skill_vs_train_constant", "pred_std")}, step=eps)
+        run.finish()
         finals.append(r)
         print(f"  seed {seed}: macro MAE {r['macro_mae']:.3f}, CCC {r['ccc']:+.3f}, "
               f"skill vs val constant {r['skill_vs_val_constant']:+.3f}, vs train constant "

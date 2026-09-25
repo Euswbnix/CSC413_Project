@@ -49,6 +49,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 import metrics
 import diagnostics
+import tracking
 from data.dataset import center_crop, SteeringData, train_batches, window_batches
 from models.interface import build_arm
 
@@ -254,6 +255,7 @@ def main():
     ap.add_argument("--health-every", type=int, default=1,
                     help="log feature RMS, gate saturation, gradient norms and clean-train "
                          "metrics to health.csv every N epochs; 0 disables")
+    tracking.add_argument(ap)
     ap.add_argument("--overwrite", action="store_true",
                     help="allow replacing a run directory that already holds final_metrics.json")
     ap.add_argument("--weight-decay", type=float, default=FIXED["weight_decay"],
@@ -320,6 +322,9 @@ def main():
     (run / "config.json").write_text(json.dumps(cfg, indent=2, default=str) + "\n")
     print(f"[{name}] {brk['total']:,} params "
           f"(encoder {brk['encoder']:,} + recurrent {brk['recurrent']:,} + readout {brk['readout']})")
+    trk = tracking.start(args.swanlab, "CSC413-train", name,
+                         config=json.loads(json.dumps(cfg, default=str)), group=args.arm,
+                         tags=[args.arm, f"seed{args.seed}", f"aug-{args.aug}"])
 
     opt = make_optimizer(model, args)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
@@ -399,6 +404,8 @@ def main():
                opt.param_groups[0]["lr"], round(time.time() - t0, 1)]
         with csv_path.open("a", newline="") as fh:
             csv.writer(fh).writerow(row)
+        trk.log({f"{'train' if c == 'train_loss' else 'val' if c.startswith('val_') else 'opt'}/{c}": v
+                 for c, v in zip(cols[1:], row[1:])}, step=epoch + 1)
         history.append(s)
         if health and (epoch % args.health_every == 0):
             grads = {k: v / max(nb, 1) for k, v in gsum.items()}
@@ -424,6 +431,8 @@ def main():
         {"name": name, "arm": args.arm, "seed": args.seed, "best_epoch": best_epoch,
          "best_val_macro_skill": best, "val": history[best_epoch] if history else None,
          "params": brk}, indent=2) + "\n")
+    trk.log({"final/best_epoch": best_epoch, "final/best_val_macro_skill": best}, step=len(history))
+    trk.finish()
     print(f"[{name}] best epoch {best_epoch}, val macro skill {best:+.4f} -> {run}")
 
 

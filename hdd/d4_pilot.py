@@ -24,6 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import metrics
+import tracking
 from d3_train import Sessions, drop_history, refuse_inside_git, run_lstm
 from models.cfc import CfC
 
@@ -66,7 +67,8 @@ def predict(model, data, mu, sd, keep_rate, mask_seed):
     return np.concatenate(preds).astype(np.float32), np.concatenate(ys).astype(np.float64)
 
 
-def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim, keep_rates):
+def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim, keep_rates,
+               run=tracking.Off()):
     """Mixed-rate training: every batch draws one keep rate."""
     torch.manual_seed(seed)
     model = Temporal(kind, dim).to(train.device)
@@ -76,10 +78,13 @@ def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim,
     best, best_state, bad = np.inf, None, 0
     for ep in range(epochs):
         model.train()
+        loss_sum, n_batches = torch.zeros((), device=train.device), 0
         for f, t, y, _ in train.batches(batch, shuffle=True, rng=rng):
             keep = float(rng.choice(keep_rates))
             mask = (drop_history(t, keep, gen) if keep < 1 else torch.ones_like(t, dtype=torch.bool))
             loss = ((run_lstm(model, f, t, mask) - (y - mu) / sd) ** 2).mean()
+            loss_sum += loss.detach()
+            n_batches += 1
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -90,10 +95,17 @@ def train_once(kind, train, val, lr, seed, epochs, patience, batch, mu, sd, dim,
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
         else:
             bad += 1
-            if bad >= patience:
-                break
+        run.log({"val/macro_mae": score, "val/best_macro_mae": best, "train/patience_used": bad,
+                 "train/loss": loss_sum.item() / max(n_batches, 1)}, step=ep + 1)
+        if bad >= patience:
+            break
     model.load_state_dict(best_state)
     return model, best, ep + 1
+
+
+def open_run(a, project, name, group, tags, **extra):
+    """One SwanLab run per train_once call; these scripts keep no checkpoints, so none resume."""
+    return tracking.start(a.swanlab, project, name, config=dict(vars(a), **extra), group=group, tags=tags)
 
 
 def cluster_of(split_dir, sessions):
@@ -116,6 +128,7 @@ def main():
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--patience", type=int, default=5)
     ap.add_argument("--batch", type=int, default=256)
+    tracking.add_argument(ap)
     a = ap.parse_args()
     refuse_inside_git(a.out)
     os.makedirs(a.out, exist_ok=True)
@@ -138,15 +151,22 @@ def main():
     for kind in ("lstm", "cfc"):
         runs = []
         for lr in a.lrs:
+            run = open_run(a, "CSC413-D4-pilot", f"{kind}_lrsearch_lr{lr:g}_s{a.seeds[0]}", f"{kind}_lr_search",
+                           [kind, "lr_search", f"lr{lr:g}", f"seed{a.seeds[0]}"], kind=kind,
+                           stage="lr_search", lr=lr, seed=a.seeds[0])
             _, score, eps = train_once(kind, train, val, lr, a.seeds[0], a.epochs, a.patience,
-                                       a.batch, mu, sd, dim, a.keep_rates)
+                                       a.batch, mu, sd, dim, a.keep_rates, run)
+            run.finish()
             runs.append(dict(lr=lr, val_macro_mae=score, epochs=eps))
             print(f"  {kind} lr {lr:g}: {score:.3f} ({eps} epochs)")
         best_lr = min(runs, key=lambda r: r["val_macro_mae"])["lr"]
         rows = []
         for seed in a.seeds:
+            run = open_run(a, "CSC413-D4-pilot", f"{kind}_final_lr{best_lr:g}_s{seed}", f"{kind}_final",
+                           [kind, "final", f"lr{best_lr:g}", f"seed{seed}"], kind=kind, stage="final",
+                           lr=best_lr, seed=seed)
             model, score, eps = train_once(kind, train, val, best_lr, seed, a.epochs, a.patience,
-                                           a.batch, mu, sd, dim, a.keep_rates)
+                                           a.batch, mu, sd, dim, a.keep_rates, run)
             blocks = model.block_parameters()
             for keep in sorted(set(a.keep_rates) | {a.main_keep}):
                 draws = a.mask_draws if keep < 1 else 1
@@ -156,6 +176,10 @@ def main():
                     rows.append(dict(seed=seed, lr=best_lr, epochs=eps, keep=keep, mask=d,
                                      macro_mae=metrics.macro_mae(p, y), ccc=metrics.ccc(p, y)))
             main = [r for r in rows if r["seed"] == seed and r["keep"] == a.main_keep]
+            mine = [r for r in rows if r["seed"] == seed]
+            run.log({f"final/keep{round(k * 100)}/{m}": np.mean([r[m] for r in mine if r["keep"] == k])
+                     for k in sorted({r["keep"] for r in mine}) for m in ("macro_mae", "ccc")}, step=eps)
+            run.finish()
             print(f"  {kind} seed {seed} (lr {best_lr:g}, {eps} epochs): full "
                   f"{[r['macro_mae'] for r in rows if r['seed'] == seed and r['keep'] == 1][0]:.3f}, "
                   f"keep {a.main_keep:g} {np.mean([r['macro_mae'] for r in main]):.3f} "

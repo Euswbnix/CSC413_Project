@@ -9,5 +9,9 @@ export TORCH_HOME="$W/.cache/torch" \
        PIP_CACHE_DIR="$W/.cache/pip" \
        XDG_CACHE_HOME="$W/.cache" \
        MPLCONFIGDIR="$W/.cache/matplotlib" \
-       TMPDIR="$W/.tmp"
+       TMPDIR="$W/.tmp" \
+       SWANLAB_LOG_DIR="$W/hdd/swanlog"
+# SwanLab's local copy holds the runs' console output, so it stays owner-only like the rest of hdd/.
+# Credentials stay in ~/.swanlab/.netrc (the user's own login); tracking.py only reads them.
 mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$CUDA_CACHE_PATH" "$MPLCONFIGDIR" "$TMPDIR"
+mkdir -p -m 700 "$SWANLAB_LOG_DIR"
