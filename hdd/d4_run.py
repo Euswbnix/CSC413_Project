@@ -139,8 +139,38 @@ class LTCBlock(nn.Module):
         return torch.stack(out, 1)
 
 
+class TransformerBlock(nn.Module):
+    """The supplementary Transformer, fixed by docs/preregistration_2026-09-22.md section 9.1.
+
+    One pre-norm encoder layer (64 wide, 4 heads, feed-forward 128, GELU, no dropout) and no
+    final LayerNorm. Time enters as a parameter-free sinusoidal code of each kept frame's real time
+    relative to the target frame, p = (t_i - t_target) / 0.1 s, added to the projected features;
+    dropped frames leave gaps in p rather than being renumbered. Attention is causal and ignores
+    padding. The kept frames are in time order with the target frame last, so the caller reads the
+    last valid token. MHA's inference fast path is switched off so eval runs the same maths as
+    training (and no nested-tensor conversion can happen)."""
+
+    def __init__(self, hidden=64, heads=4, ff=128):
+        super().__init__()
+        torch.backends.mha.set_fastpath_enabled(False)
+        self.layer = nn.TransformerEncoderLayer(hidden, heads, dim_feedforward=ff, dropout=0.0,
+                                                activation="gelu", batch_first=True,
+                                                norm_first=True)
+        j = torch.arange(hidden // 2, dtype=torch.float32)
+        self.register_buffer("inv_freq", 10000.0 ** (-2 * j / hidden), persistent=False)
+
+    def time_code(self, rel):
+        p = (rel / 0.1)[..., None] * self.inv_freq                       # (B, T, hidden/2)
+        return torch.stack([torch.sin(p), torch.cos(p)], -1).flatten(-2)   # dims 2j, 2j+1
+
+    def forward(self, x, rel, valid):
+        T = x.shape[1]
+        causal = torch.triu(torch.ones(T, T, dtype=torch.bool, device=x.device), 1)
+        return self.layer(x + self.time_code(rel), src_mask=causal, src_key_padding_mask=~valid)
+
+
 class Arm(nn.Module):
-    """Shared projection and readout; the recurrent block is the only difference."""
+    """Shared projection and readout; the temporal block is the only difference."""
 
     def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False):
         super().__init__()
@@ -148,15 +178,20 @@ class Arm(nn.Module):
         self.norm = nn.LayerNorm(dim, elementwise_affine=False)
         self.proj = nn.Linear(dim, hidden)
         self.rnn = (nn.LSTM(hidden + 1, hidden, batch_first=True) if kind == "lstm" else
-                    CfC(hidden, hidden) if kind == "cfc" else LTCBlock(hidden, seed, ode_unfolds, compile_ltc))
+                    CfC(hidden, hidden) if kind == "cfc" else
+                    TransformerBlock(hidden) if kind == "transformer" else
+                    LTCBlock(hidden, seed, ode_unfolds, compile_ltc))
         self.head = nn.Linear(hidden, 1)
 
-    def forward(self, f, dt, valid):
+    def forward(self, f, dt, valid, rel=None):
+        """rel: each kept frame's time minus the target frame's, in seconds (Transformer only)."""
         x = self.proj(self.norm(f)) * valid[:, :, None]
         if self.kind == "lstm":
             out, _ = self.rnn(torch.cat([x, dt[:, :, None]], -1))
         elif self.kind == "cfc":
             out, _ = self.rnn(x, dt)
+        elif self.kind == "transformer":
+            out = self.rnn(x, rel, valid)
         else:
             out = self.rnn(x, dt)
         last = valid.float().cumsum(1).argmax(1)
@@ -189,7 +224,8 @@ def forward_masked(model, f, t, keep, gen):
     valid = torch.gather(mask, 1, idx)
     dt = torch.zeros_like(kt)
     dt[:, 1:] = (kt[:, 1:] - kt[:, :-1]).clamp(min=0)
-    return model(kf, dt.to(kf.dtype), valid)
+    rel = kt - t[:, -1:]                      # the target frame is always kept, and kept last
+    return model(kf, dt.to(kf.dtype), valid, rel.to(kf.dtype))
 
 
 def predict(model, data, mu, sd, keep, mask_seed):
@@ -348,7 +384,7 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", required=True)
-    ap.add_argument("--arm", required=True, choices=("lstm", "cfc", "ltc"))
+    ap.add_argument("--arm", required=True, choices=("lstm", "cfc", "ltc", "transformer"))
     ap.add_argument("--stage", required=True, choices=("lr", "final"))
     ap.add_argument("--out", required=True)
     ap.add_argument("--split-name", default="val", choices=("val", "test"))
