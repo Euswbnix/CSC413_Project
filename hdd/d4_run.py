@@ -398,6 +398,12 @@ def main():
         if not a.lr:
             sys.exit("--lr is required for the final stage")
         for seed in a.seeds:
+            done = os.path.join(a.out, f"{a.arm}_s{seed}_{a.split_name}.json")
+            if os.path.exists(done):
+                # written only after training finished, and a finished checkpoint never trains
+                # again, so re-evaluating would reproduce it exactly (and open another SwanLab run)
+                print(f"[{tag}] seed {seed}: already finished and evaluated ({os.path.basename(done)})")
+                continue
             model, mean, eps, div, run = train(a.arm, train_d, val_d, yva, a.lr, seed, a, mu, sd, dim, tag)
             final_mean, per, preds = score_all(model, val_d, yva, mu, sd, a.keep_rates, a.mask_draws)
             run.log({f"final_{a.split_name}/mean_macro_mae": final_mean,
