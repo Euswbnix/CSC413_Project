@@ -8,7 +8,7 @@ worth committing to.
 The per-cluster contribution uses the macro weights of the whole evaluation set, so the
 contributions add up to the overall difference (metrics.macro_weights).
 
-    python hdd/d4_variance.py --pilot ~/data/hdd/d4_pilot/dinov2
+    python hdd/d4_variance.py --pilot ~/workspace/hdd/d4_pilot/dinov2
 """
 import argparse
 import json

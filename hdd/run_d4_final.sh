@@ -3,8 +3,9 @@
 # Each quoted group of seeds is one process; the groups run in parallel. Extra arguments for
 # d4_run.py (e.g. --ode-unfolds 24 for LTC) go in $D4_EXTRA_ARGS.
 umask 077
-cd "$HOME/data/hdd"
-export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/data/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
+cd "$HOME/workspace/hdd"
+. ./env.sh
+export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/workspace/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
 PY="$HOME/miniconda/envs/DL/bin/python"
 arm="$1"; shift
 lr=$("$PY" - "$arm" <<'PYEOF'

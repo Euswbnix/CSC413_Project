@@ -11,7 +11,7 @@ a clock in seconds that wraps every 128 s, and a counter. For every session this
     fitted out, how long it strays by more than 0.2 s / 1 s, and whether it strays by a jump (a
     large step between consecutive frames) or gradually. Timestamps alone cannot say which clock
     is wrong: a receive backlog would misalign frames and CAN, a slewed host clock would not.
-Usage: python hdd/timestamp_gaps.py --raw ~/data/hdd/raw --out ~/data/hdd/checks/timestamp_gaps.json
+Usage: python hdd/timestamp_gaps.py --raw ~/workspace/hdd/raw --out ~/workspace/hdd/checks/timestamp_gaps.json
 """
 import argparse
 import glob
@@ -32,7 +32,7 @@ def refuse_inside_git(path):
     d = os.path.abspath(path if os.path.isdir(path) else os.path.dirname(path) or ".")
     while True:
         if os.path.exists(os.path.join(d, ".git")):
-            sys.exit(f"refusing to write HDD-derived output inside a git working tree ({d}); use ~/data/hdd/")
+            sys.exit(f"refusing to write HDD-derived output inside a git working tree ({d}); use ~/workspace/hdd/")
         parent = os.path.dirname(d)
         if parent == d:
             return

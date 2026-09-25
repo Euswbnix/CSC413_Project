@@ -5,9 +5,10 @@
 # Output: $HDD/checks/mp4_meta.csv (server-only). Usage, on the server: bash hdd/probe_videos.sh
 set -o pipefail
 umask 077
-HDD=${HDD:-$HOME/data/hdd}
+HDD=${HDD:-$HOME/workspace/hdd}
+. "$HDD/env.sh"
 PY=${PY:-$HOME/.conda/envs/llm-ui/bin/python}
-export PYTHONPATH=${PYTHONPATH:-$HOME/.cache/csc413_testdeps}
+export PYTHONPATH=${PYTHONPATH:-$HOME/workspace/.cache/csc413_testdeps}
 
 if [ "$1" = "--member" ]; then
     # called by tar once per archive member, with the member's bytes on stdin

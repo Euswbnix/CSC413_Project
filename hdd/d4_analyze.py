@@ -11,7 +11,7 @@ distinguished.
 Also reports H-B (degradation from full history to the condition) with the same resampling, and a
 per-session and per-date clustering as sensitivity analyses.
 
-    python hdd/d4_analyze.py --pred ~/data/hdd/d4/dinov2 --a cfc --b lstm --split val
+    python hdd/d4_analyze.py --pred ~/workspace/hdd/d4/dinov2 --a cfc --b lstm --split val
 """
 import argparse
 import glob

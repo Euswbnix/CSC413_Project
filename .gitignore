@@ -44,7 +44,7 @@ results/
 
 # HDD (Honda) data and anything derived from it: licence §4.b, never in this public repo.
 # Derived outputs (features, block assignments, GPS tracks, per-session tables, overlay clips)
-# live on the server under ~/data/hdd/ only.
+# live on the server under ~/workspace/hdd/ only.
 hdd_data/
 data/hdd*/
 data/processed_hdd*/
@@ -58,7 +58,7 @@ data/processed_hdd*/
 *.avi
 *.mkv
 *.m4v
-# Scripts in hdd/ must write to ~/data/hdd/; catch outputs that land next to them by mistake.
+# Scripts in hdd/ must write to ~/workspace/hdd/; catch outputs that land next to them by mistake.
 hdd/**/*.csv
 hdd/**/*.json
 # More HDD-derived formats: split files, pickled or zarr feature caches, per-session tables.

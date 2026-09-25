@@ -10,8 +10,8 @@ Written before running (docs/discussion_2026-09-21_next_steps.md section 1.3):
   * H2 dropping hurts: LSTM at 75% is >= 3% worse than at 0%, all seeds;
   * budget: three learning rates at one seed, then three seeds at the winner, per model family.
 
-    python hdd/d3_train.py --features ~/data/hdd/features/dinov2_s1 --split ~/data/hdd/split_a \
-        --out ~/data/hdd/d3/dinov2
+    python hdd/d3_train.py --features ~/workspace/hdd/features/dinov2_s1 --split ~/workspace/hdd/split_a \
+        --out ~/workspace/hdd/d3/dinov2
 """
 import argparse
 import json

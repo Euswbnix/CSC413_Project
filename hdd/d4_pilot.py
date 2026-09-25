@@ -7,8 +7,8 @@ each batch draws one keep rate - evaluates one checkpoint under every condition,
 prediction for every target frame so the variance can be split three ways. Validation only; the
 test split is not read.
 
-    python hdd/d4_pilot.py --features ~/data/hdd/features/dinov2_s1 --split ~/data/hdd/split_a \
-        --out ~/data/hdd/d4_pilot
+    python hdd/d4_pilot.py --features ~/workspace/hdd/features/dinov2_s1 --split ~/workspace/hdd/split_a \
+        --out ~/workspace/hdd/d4_pilot
 """
 import argparse
 import json

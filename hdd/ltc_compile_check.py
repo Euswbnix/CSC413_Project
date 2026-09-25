@@ -7,7 +7,7 @@ ones that do. Each of those can trigger a recompilation; past torch's limit it s
 to eager. This check exercises all of them, compares outputs and every parameter gradient, reports
 how many graphs were compiled, and times both paths.
 
-    python hdd/ltc_compile_check.py --cache ~/data/hdd/cache/dinov2_10hz --ckpt <ltc checkpoint>
+    python hdd/ltc_compile_check.py --cache ~/workspace/hdd/cache/dinov2_10hz --ckpt <ltc checkpoint>
 """
 import argparse
 import os

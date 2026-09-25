@@ -12,7 +12,7 @@ Dataset level: totals and a check that the TRN split's sessions are all in the r
 overlap between splits is measured by geo_split_feasibility.py from the tracks written here.
 
 Writes <out>/sessions.csv, <out>/summary.json and <out>/tracks_1hz.npz (server-only). Usage:
-    python hdd/week1_checks.py --raw ~/data/hdd/raw --split trn_data_info.json --out ~/data/hdd/checks
+    python hdd/week1_checks.py --raw ~/workspace/hdd/raw --split trn_data_info.json --out ~/workspace/hdd/checks
 """
 import argparse
 import glob
@@ -38,7 +38,7 @@ def refuse_inside_git(path):
     d = os.path.abspath(path if os.path.isdir(path) else os.path.dirname(path) or ".")
     while True:
         if os.path.exists(os.path.join(d, ".git")):
-            sys.exit(f"refusing to write HDD-derived output inside a git working tree ({d}); use ~/data/hdd/")
+            sys.exit(f"refusing to write HDD-derived output inside a git working tree ({d}); use ~/workspace/hdd/")
         parent = os.path.dirname(d)
         if parent == d:
             return

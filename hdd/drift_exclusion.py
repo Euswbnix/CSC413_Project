@@ -5,7 +5,7 @@ For every session, frames where ROS time strays from the camera clock by more th
 flagged, or if any frame in its history window is flagged. Losses are counted over prediction
 targets (moving > 3 m/s, valid steering label), overall, by |steer| bin, and by split of the
 whole-session design A found by geo_split_feasibility.py (sessions without usable GPS: "none").
-Usage (server): python hdd/drift_exclusion.py --raw ~/data/hdd/raw --checks ~/data/hdd/checks \
+Usage (server): python hdd/drift_exclusion.py --raw ~/workspace/hdd/raw --checks ~/workspace/hdd/checks \
     --exclude 201706081335 201706081445 201706081626 201706081707
 """
 import argparse

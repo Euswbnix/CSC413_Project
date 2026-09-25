@@ -4,8 +4,9 @@
 # ltc_compile_check.py): 6-9x faster and ~15x less memory than eager, so everything runs at once. Every epoch is checkpointed, so rerunning this after a shutdown
 # resumes where it stopped; finished runs return immediately from their checkpoints.
 umask 077
-cd "$HOME/data/hdd"
-export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/data/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
+cd "$HOME/workspace/hdd"
+. ./env.sh
+export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/workspace/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
 grid_one() {
   nice -n 10 "$HOME/miniconda/envs/DL/bin/python" -W ignore d4_run.py --cache cache/dinov2_10hz \
       --arm ltc --stage lr --lrs "$1" --tag "_$1" --out d4/dinov2 --ode-unfolds 24 --compile-ltc \

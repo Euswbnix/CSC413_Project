@@ -4,7 +4,8 @@
 #   bash d4_ctl.sh start     # start, or resume from checkpoints after a shutdown
 #   bash d4_ctl.sh stop      # stop everything; the last finished epoch of each run is kept
 #   bash d4_ctl.sh status
-cd "$HOME/data/hdd"
+cd "$HOME/workspace/hdd"
+. ./env.sh
 PIDFILE=d4_ltc24.pgid
 case "$1" in
   start)

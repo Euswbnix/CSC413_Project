@@ -44,6 +44,6 @@
 ## 复现
 
 ```bash
-python hdd/d4_pilot.py --features ~/data/hdd/features/dinov2_s1 --split ~/data/hdd/split_a --out ~/data/hdd/d4_pilot/dinov2
-python hdd/d4_variance.py --pilot ~/data/hdd/d4_pilot/dinov2 --keep 0.25
+python hdd/d4_pilot.py --features ~/workspace/hdd/features/dinov2_s1 --split ~/workspace/hdd/split_a --out ~/workspace/hdd/d4_pilot/dinov2
+python hdd/d4_variance.py --pilot ~/workspace/hdd/d4_pilot/dinov2 --keep 0.25
 ```

@@ -14,8 +14,8 @@ Per session this decodes the front-camera video once and writes, to <out>/<sessi
 profile of consecutive frames. Cross-correlating it with the CAN yaw rate is how we check that
 frames and steering really are aligned, without anyone looking at a frame.
 
-    python hdd/extract_features.py --videos ~/data/hdd/video --raw ~/data/hdd/raw \
-        --out ~/data/hdd/features/dinov2_s10 --stride 10 --workers 4
+    python hdd/extract_features.py --videos ~/workspace/hdd/video --raw ~/workspace/hdd/raw \
+        --out ~/workspace/hdd/features/dinov2_s10 --stride 10 --workers 4
 """
 import argparse
 import json

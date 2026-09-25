@@ -23,8 +23,8 @@ windows (--selftest, and hdd/tests/test_sync_estimator.py):
 So the estimate uses the per-frame signals and a Pearson correlation computed on the overlapping
 samples only. Run --selftest after touching any of it.
 
-    python hdd/sync_check.py --features ~/data/hdd/features/dinov2_s10 --raw ~/data/hdd/raw \
-        --out ~/data/hdd/checks/sync_check.json --signal steer --max-lag-s 5
+    python hdd/sync_check.py --features ~/workspace/hdd/features/dinov2_s10 --raw ~/workspace/hdd/raw \
+        --out ~/workspace/hdd/checks/sync_check.json --signal steer --max-lag-s 5
 """
 import argparse
 import glob

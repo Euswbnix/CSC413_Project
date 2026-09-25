@@ -10,8 +10,8 @@ Features come from the shared cache (hdd/make_cache.py) through mmap, so running
 once costs one copy of the data, not six. Every epoch is checkpointed under <out>/ckpt/ and a
 rerun of the same command resumes where it stopped, so a shutdown costs at most one epoch.
 
-    python hdd/d4_run.py --cache ~/data/hdd/cache/dinov2_10hz --arm cfc --stage lr  --out ~/data/hdd/d4
-    python hdd/d4_run.py --cache ~/data/hdd/cache/dinov2_10hz --arm cfc --stage final --seeds 0 1 --out ~/data/hdd/d4
+    python hdd/d4_run.py --cache ~/workspace/hdd/cache/dinov2_10hz --arm cfc --stage lr  --out ~/workspace/hdd/d4
+    python hdd/d4_run.py --cache ~/workspace/hdd/cache/dinov2_10hz --arm cfc --stage final --seeds 0 1 --out ~/workspace/hdd/d4
 """
 import argparse
 import json

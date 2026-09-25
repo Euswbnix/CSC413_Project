@@ -8,8 +8,8 @@ macro skill >= 5% against the constant and CCC > 0.3.
 Targets are the frames a model is asked about: moving (> 3 m/s) with a steering label that does
 not bridge a CAN gap. Metrics come from metrics.py, so they mean what they meant on SullyChen.
 
-    python hdd/d2_train.py --features ~/data/hdd/features/dinov2_s10 --split ~/data/hdd/split_a \
-        --out ~/data/hdd/d2/dinov2
+    python hdd/d2_train.py --features ~/workspace/hdd/features/dinov2_s10 --split ~/workspace/hdd/split_a \
+        --out ~/workspace/hdd/d2/dinov2
 """
 import argparse
 import json

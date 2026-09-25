@@ -267,9 +267,10 @@ LTC 的注意事项：
   - 100 Hz 转角插值到帧时间，但只在前后两个 CAN 样本相距不超过 50 ms 时才插值，否则这一帧没有标签，丢掉；
   - 按这条规则，落在 CAN 时间范围之外和 CAN 断档里的帧共约 7.4 万帧（0.7%）。有 4 个会话的 CAN 断档超过 1 秒，最长 32 分钟。
   - `hdd/week1_checks.py` 已经按这条规则改过。HDD 的 CAN、GPS、时间戳和划分统计都来自 2026-09-21 用当前三个 `hdd/` 脚本的同一次运行；视频容器的元数据（帧数、分辨率、帧率）由 `hdd/probe_videos.sh` 另外读取；SullyChen 和 ncps 的数字来自各自引用的文档。
-- **服务器环境**：DL conda 环境，torch 2.14.0+cu130、torchvision 0.29、numpy 2.2.6、opencv 5.0，`ncps` 固定在 1.0.1。5090 上跑 DINOv2 必须设 `XFORMERS_DISABLED=1`，否则 flash-attention 报 CUDA 错误。升级前的环境规格备份在服务器的 `~/DL_pip_freeze_20260922.txt`。
+- **服务器环境**：DL conda 环境，torch 2.14.0+cu130、torchvision 0.29、numpy 2.2.6、opencv 5.0，`ncps` 固定在 1.0.1。5090 上跑 DINOv2 必须设 `XFORMERS_DISABLED=1`，否则 flash-attention 报 CUDA 错误。升级前的环境规格备份在服务器的 `~/workspace/server-admin/DL_pip_freeze_20260922.txt`。
+- **服务器只能用 `~/workspace`**：本项目在服务器上的所有东西（数据、仓库、缓存、临时文件）都放在 `~/workspace` 下。torch.hub、torch.compile、Triton、CUDA JIT 和 pip 默认会写到 `~/.cache`、`~/.triton`、`~/.nv` 和 `/tmp`，所以运行任何 `hdd/` 脚本之前先执行 `. hdd/env.sh`，把这些位置都改到 `~/workspace/.cache` 下；启动脚本已经自动做了这一步。
 - **HDD 衍生文件放哪里**：
-  - 特征、划分文件、GPS 轨迹、逐会话统计表、核对视频，一律写到服务器的 `~/data/hdd/` 下（仅本人可读），不要写进仓库工作目录；
+  - 特征、划分文件、GPS 轨迹、逐会话统计表、核对视频，一律写到服务器的 `~/workspace/hdd/` 下（仅本人可读），不要写进仓库工作目录；
   - `.gitignore` 已经补上了常见的特征、视频、划分和统计表格式，但它只是最后一道防线。
 - **公开仓库**：
   - 只放代码和汇总统计；

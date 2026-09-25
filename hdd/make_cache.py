@@ -5,8 +5,8 @@ own memory: six seeds in parallel would need six copies of the same 7 GB. This w
 base-rate slice as uncompressed arrays plus a small index, which np.load(mmap_mode="r") maps
 straight from the page cache.
 
-    python hdd/make_cache.py --features ~/data/hdd/features/dinov2_s1 --split ~/data/hdd/split_a \
-        --out ~/data/hdd/cache/dinov2_10hz --base-hz 10
+    python hdd/make_cache.py --features ~/workspace/hdd/features/dinov2_s1 --split ~/workspace/hdd/split_a \
+        --out ~/workspace/hdd/cache/dinov2_10hz --base-hz 10
 """
 import argparse
 import json

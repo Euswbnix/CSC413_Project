@@ -5,8 +5,8 @@ condition, five masks each; if 6 and 24 sub-steps differ by more than 0.1 degree
 every LTC run is retrained at 24. The number of sub-steps changes only how finely the cell
 integrates between observations, not its parameters, so the same state dict loads into each.
 
-    python hdd/ltc_unfolds_check.py --cache ~/data/hdd/cache/dinov2_10hz \
-        --ckpt ~/data/hdd/d4/dinov2/ckpt/ltc_lr0.001_s0.pt --out ~/data/hdd/d4/dinov2/ltc_unfolds_check.json
+    python hdd/ltc_unfolds_check.py --cache ~/workspace/hdd/cache/dinov2_10hz \
+        --ckpt ~/workspace/hdd/d4/dinov2/ckpt/ltc_lr0.001_s0.pt --out ~/workspace/hdd/d4/dinov2/ltc_unfolds_check.json
 """
 import argparse
 import json

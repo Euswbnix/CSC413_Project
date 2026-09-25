@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Stage 1: the pre-registered learning-rate grid, one process per (arm, rate), six at a time.
 umask 077
-cd "$HOME/data/hdd"
-export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/data/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
+cd "$HOME/workspace/hdd"
+. ./env.sh
+export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/workspace/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
 PY="$HOME/miniconda/envs/DL/bin/python"
 run_one() {
-  nice -n 10 "$HOME/miniconda/envs/DL/bin/python" -W ignore "$HOME/data/hdd/d4_run.py" \
+  nice -n 10 "$HOME/miniconda/envs/DL/bin/python" -W ignore "$HOME/workspace/hdd/d4_run.py" \
       --cache cache/dinov2_10hz --arm "$1" --stage lr --lrs "$2" --tag "_$2" --out d4/dinov2 \
       2>&1 | grep -v Warning
 }
