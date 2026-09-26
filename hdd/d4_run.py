@@ -33,6 +33,7 @@ from models.cfc import CfC
 MOVING = 3.0
 MIN_DT = 1e-3          # never feed dt = 0 to the LTC solver
 PROJECT = "CSC413-D4"  # SwanLab project; one run per checkpoint (arm, rate, seed, solver steps)
+EXPLORE_PROJECT = "CSC413-D4-explore"   # runs with a non-default --dt-unit (docs/explore_2026-09-26_dt_units.md)
 CODE_SHA256 = __import__("hashlib").sha256(open(__file__, "rb").read()).hexdigest()
 
 
@@ -172,9 +173,12 @@ class TransformerBlock(nn.Module):
 class Arm(nn.Module):
     """Shared projection and readout; the temporal block is the only difference."""
 
-    def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False):
+    def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False, dt_unit=1.0):
         super().__init__()
         self.kind = kind
+        # dt arrives in seconds; the registered D4 runs used it as is (dt_unit 1.0). The exploratory
+        # runs divide it by the train-split median step so one ordinary step is 1.
+        self.dt_unit = float(dt_unit)
         self.norm = nn.LayerNorm(dim, elementwise_affine=False)
         self.proj = nn.Linear(dim, hidden)
         self.rnn = (nn.LSTM(hidden + 1, hidden, batch_first=True) if kind == "lstm" else
@@ -186,6 +190,8 @@ class Arm(nn.Module):
     def forward(self, f, dt, valid, rel=None):
         """rel: each kept frame's time minus the target frame's, in seconds (Transformer only)."""
         x = self.proj(self.norm(f)) * valid[:, :, None]
+        if self.dt_unit != 1.0:
+            dt = dt / self.dt_unit
         if self.kind == "lstm":
             out, _ = self.rnn(torch.cat([x, dt[:, :, None]], -1))
         elif self.kind == "cfc":
@@ -268,7 +274,8 @@ def open_run(args, arm, lr, seed, run_id, ckpt, n_train, n_val):
     config = dict(vars(args), arm=arm, lr=lr, seed=seed, checkpoint=os.path.abspath(ckpt),
                   train_windows=n_train, val_windows=n_val, code_sha256=CODE_SHA256,
                   torch=torch.__version__)
-    return tracking.start(args.swanlab, PROJECT, name, config=config, group=f"{arm}{unfolds}",
+    project = PROJECT if args.dt_unit == 1.0 else EXPLORE_PROJECT
+    return tracking.start(args.swanlab, project, name, config=config, group=f"{arm}{unfolds}",
                           tags=[arm, f"lr{lr:g}", f"seed{seed}"],
                           run_id=run_id or tracking.new_run_id(name))
 
@@ -283,7 +290,7 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
     only after the epoch's checkpoint is on disk."""
     torch.manual_seed(seed)
     model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds,
-                compile_ltc=args.compile_ltc).to(train_d.device)
+                compile_ltc=args.compile_ltc, dt_unit=args.dt_unit).to(train_d.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
@@ -405,6 +412,8 @@ def main():
     ap.add_argument("--compile-ltc", action="store_true",
                     help="torch.compile the LTC cell (same maths; checked by ltc_compile_check.py)")
     ap.add_argument("--max-step", type=float, default=0.2)
+    ap.add_argument("--dt-unit", type=float, default=1.0,
+                    help="divide dt (seconds) by this; 1.0 = the registered D4 runs. Use a separate --out")
     ap.add_argument("--tag", default="", help="suffix for the output files, so parallel runs do not collide")
     tracking.add_argument(ap)
     a = ap.parse_args()

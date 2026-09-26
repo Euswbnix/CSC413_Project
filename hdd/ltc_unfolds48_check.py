@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--stored", help="the final evaluation JSON of the same checkpoint")
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--dt-unit", type=float, default=1.0, help="as the checkpoint was trained (d4_run --dt-unit)")
     a = ap.parse_args()
     D.refuse_inside_git(a.out)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,11 +47,12 @@ def main():
     ytr, yva = train.labels(), val.labels()
     mu, sd = float(ytr.mean()), float(ytr.std())
     state = torch.load(a.ckpt, map_location="cpu", weights_only=False)["best_state"]
-    res = dict(ckpt=os.path.basename(a.ckpt), frames=int(len(yva)), threshold=THRESHOLD,
+    res = dict(ckpt=os.path.basename(a.ckpt), dt_unit=a.dt_unit, frames=int(len(yva)), threshold=THRESHOLD,
                mask_seeds=MASK_SEEDS, unfolds={})
     for k in (24, 48):
         t0 = time.perf_counter()
-        model = D.Arm("ltc", train.items[0]["feats"].shape[1], seed=a.seed, ode_unfolds=k).to(dev)
+        model = D.Arm("ltc", train.items[0]["feats"].shape[1], seed=a.seed, ode_unfolds=k,
+                      dt_unit=a.dt_unit).to(dev)
         model.load_state_dict(state)
         full = metrics.macro_mae(D.predict(model, val, mu, sd, 1.0, MASK_SEEDS[0]), yva)
         masks = [metrics.macro_mae(D.predict(model, val, mu, sd, 0.25, s), yva) for s in MASK_SEEDS]

@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Stage 2: eight seeds per arm at the rate the grid chose. Usage: run_d4_final.sh ARM "SEEDS" ["SEEDS" ...]
 # Each quoted group of seeds is one process; the groups run in parallel. Extra arguments for
-# d4_run.py (e.g. --ode-unfolds 24 for LTC) go in $D4_EXTRA_ARGS.
+# d4_run.py (e.g. --ode-unfolds 24 for LTC) go in $D4_EXTRA_ARGS; $D4_OUT (default d4/dinov2) is
+# where the grid results are read and the runs written.
 umask 077
 cd "$HOME/workspace/hdd"
 . ./env.sh
 export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/workspace/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
 PY="$HOME/miniconda/envs/DL/bin/python"
+OUT="${D4_OUT:-d4/dinov2}"
 arm="$1"; shift
-lr=$("$PY" - "$arm" <<'PYEOF'
+lr=$("$PY" - "$arm" "$OUT" <<'PYEOF'
 import glob, json, sys
-arm = sys.argv[1]
+arm, out = sys.argv[1], sys.argv[2]
 # only the grid points ({arm}_lr_<rate>.json), not the summary this script writes
-rows = [r for f in glob.glob(f"d4/dinov2/{arm}_lr_[0-9]*.json") for r in json.load(open(f))["rows"]]
+rows = [r for f in glob.glob(f"{out}/{arm}_lr_[0-9]*.json") for r in json.load(open(f))["rows"]]
 if len(rows) != 4:
     sys.exit(f"{arm}: expected 4 grid points, found {len(rows)}")
 # a grid point that diverged is not eligible, whatever its score before diverging
@@ -21,14 +23,14 @@ if not ok:
     sys.exit(f"{arm}: every grid point diverged; no valid comparison (pre-registration section 6)")
 best = min(ok, key=lambda r: r["mean_macro_mae"])
 json.dump(dict(arm=arm, rows=sorted(rows, key=lambda r: -r["lr"]), chosen_lr=best["lr"]),
-          open(f"d4/dinov2/{arm}_lr_chosen.json", "w"), indent=1)
+          open(f"{out}/{arm}_lr_chosen.json", "w"), indent=1)
 print(best["lr"])
 PYEOF
 ) || exit 1
 echo "$arm: chosen lr $lr"
 for group in "$@"; do
   nice -n 10 "$PY" -W ignore d4_run.py --cache cache/dinov2_10hz --arm "$arm" --stage final \
-      --lr "$lr" --seeds $group --out d4/dinov2 $D4_EXTRA_ARGS 2>&1 | grep --line-buffered -v Warning &
+      --lr "$lr" --seeds $group --out "$OUT" $D4_EXTRA_ARGS 2>&1 | grep --line-buffered -v Warning &
 done
 wait
 echo "$arm FINAL DONE"

@@ -148,7 +148,7 @@ def test_the_test_split_never_trains(tmp_path):
     """--split-name test must refuse an unfinished (or missing) checkpoint instead of training on
     the test windows as validation."""
     from types import SimpleNamespace
-    args = SimpleNamespace(ode_unfolds=6, compile_ltc=False, out=str(tmp_path), patience=8, epochs=60,
+    args = SimpleNamespace(ode_unfolds=6, compile_ltc=False, dt_unit=1.0, out=str(tmp_path), patience=8, epochs=60,
                            split_name="test", stage="final", swanlab="off", batch=4, keep_rates=[1.0])
 
     class Tiny:
@@ -159,3 +159,19 @@ def test_the_test_split_never_trains(tmp_path):
 
     with pytest.raises(SystemExit, match="refusing to train"):
         D.train("lstm", Tiny(), Tiny(), np.zeros(1), 3e-4, 0, args, 0.0, 1.0, DIM, "t")
+
+
+@pytest.mark.parametrize("kind", ["lstm", "cfc"])
+def test_dt_unit_default_is_the_registered_behaviour_and_otherwise_just_rescales(kind):
+    """docs/explore_2026-09-26_dt_units.md: dt_unit=1.0 must leave the registered D4 model exactly
+    as it was; any other unit is the same as feeding dt / unit."""
+    f, dt, valid, rel = batch([10, 6])
+    ref = model(kind).eval()
+    unit = model(kind).eval()
+    unit.dt_unit = 0.099875
+    same = model(kind).eval()
+    same.dt_unit = 1.0
+    with torch.no_grad():
+        assert torch.equal(same(f, dt, valid, rel), ref(f, dt, valid, rel))
+        assert torch.allclose(unit(f, dt, valid, rel), ref(f, dt / 0.099875, valid, rel), atol=1e-12)
+        assert not torch.allclose(unit(f, dt, valid, rel), ref(f, dt, valid, rel))
