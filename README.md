@@ -15,6 +15,11 @@
      prints point-weighted completion. Fill each section the day its input lands -- do NOT
      save the writing for the final week. -->
 
+> **Pre-registration (D4, Honda HDD).** The analysis plan is
+> [`docs/preregistration_2026-09-22.md`](docs/preregistration_2026-09-22.md), locked at commit
+> `dc4a36cb39efc9695869efec5712909ef4823ca9` before the single test evaluation (2026-09-25).
+> Its section 9 was added after the validation results were seen, and says so.
+
 ---
 
 ## Introduction
