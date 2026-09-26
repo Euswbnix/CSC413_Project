@@ -6,6 +6,7 @@ import math
 import os
 import sys
 
+import numpy as np
 import pytest
 import torch
 
@@ -141,3 +142,20 @@ def test_transformer_trains_one_step_without_nan():
     assert all(torch.isfinite(p.grad).all() for p in m.parameters() if p.grad is not None)
     opt.step()
     assert math.isfinite(float(loss.detach()))
+
+
+def test_the_test_split_never_trains(tmp_path):
+    """--split-name test must refuse an unfinished (or missing) checkpoint instead of training on
+    the test windows as validation."""
+    from types import SimpleNamespace
+    args = SimpleNamespace(ode_unfolds=6, compile_ltc=False, out=str(tmp_path), patience=8, epochs=60,
+                           split_name="test", stage="final", swanlab="off", batch=4, keep_rates=[1.0])
+
+    class Tiny:
+        device, n = "cpu", 1
+
+        def labels(self):
+            return np.zeros(1)
+
+    with pytest.raises(SystemExit, match="refusing to train"):
+        D.train("lstm", Tiny(), Tiny(), np.zeros(1), 3e-4, 0, args, 0.0, 1.0, DIM, "t")

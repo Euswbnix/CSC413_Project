@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Start or stop a D4 pipeline (run_<name>.sh) as one process group, so stopping it also stops the
 # xargs scheduler and every python worker it spawned (killing only the parent orphans them).
-#   bash d4_ctl.sh start [name]     # start, or resume from checkpoints after a shutdown
+#   bash d4_ctl.sh start [name [args]]   # start, or resume from checkpoints after a shutdown
 #   bash d4_ctl.sh stop [name]      # stop everything; the last finished epoch of each run is kept
 #   bash d4_ctl.sh status [name]
-# name: ltc24 (default) or transformer. Log: d4_<name>.log.
+# name: ltc24 (default), transformer, or test_eval (args: rehearse | test [--resume]).
+# Log: d4_<name>.log; any further arguments go to run_<name>.sh.
 cd "$HOME/workspace/hdd"
 . ./env.sh
 P="${2:-ltc24}"
@@ -15,7 +16,7 @@ case "$1" in
     if [ -f "$PIDFILE" ] && kill -0 -- "-$(cat $PIDFILE)" 2>/dev/null; then
       echo "already running (process group $(cat $PIDFILE))"; exit 1
     fi
-    setsid bash "run_$P.sh" >> "d4_$P.log" 2>&1 < /dev/null &
+    setsid bash "run_$P.sh" "${@:3}" >> "d4_$P.log" 2>&1 < /dev/null &
     echo $! > "$PIDFILE"
     echo "started process group $(cat $PIDFILE)" ;;
   stop)
@@ -31,5 +32,5 @@ case "$1" in
     else
       echo "not running"
     fi ;;
-  *) echo "usage: $0 start|stop|status [ltc24|transformer]"; exit 2 ;;
+  *) echo "usage: $0 start|stop|status [ltc24|transformer|test_eval [args]]"; exit 2 ;;
 esac

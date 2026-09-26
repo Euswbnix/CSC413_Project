@@ -312,6 +312,10 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
             run = (open_run(args, arm, lr, seed, run_id, ckpt, *sizes) if args.stage == "final"
                    else tracking.Off())
             return model, best, start, diverged, run
+    if args.split_name == "test":
+        # here val_d is the test split, and training would use it for early stopping
+        sys.exit(f"refusing to train {os.path.basename(ckpt)} with the test split as validation: "
+                 "the test evaluation only scores finished checkpoints (pre-registration section 7)")
     run_id = run_id or tracking.new_run_id(f"{arm}_lr{lr:g}_s{seed}{unfolds}")
     run = open_run(args, arm, lr, seed, run_id, ckpt, *sizes)
     ep = start - 1
