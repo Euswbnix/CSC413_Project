@@ -148,7 +148,7 @@ def test_the_test_split_never_trains(tmp_path):
     """--split-name test must refuse an unfinished (or missing) checkpoint instead of training on
     the test windows as validation."""
     from types import SimpleNamespace
-    args = SimpleNamespace(ode_unfolds=6, compile_ltc=False, dt_unit=1.0, out=str(tmp_path), patience=8, epochs=60,
+    args = SimpleNamespace(ode_unfolds=6, compile_ltc=False, dt_unit=1.0, time_code="real", out=str(tmp_path), patience=8, epochs=60,
                            split_name="test", stage="final", swanlab="off", batch=4, keep_rates=[1.0])
 
     class Tiny:
@@ -175,3 +175,57 @@ def test_dt_unit_default_is_the_registered_behaviour_and_otherwise_just_rescales
         assert torch.equal(same(f, dt, valid, rel), ref(f, dt, valid, rel))
         assert torch.allclose(unit(f, dt, valid, rel), ref(f, dt / 0.099875, valid, rel), atol=1e-12)
         assert not torch.allclose(unit(f, dt, valid, rel), ref(f, dt, valid, rel))
+
+
+# --- exploratory time-code ablation (docs/explore_2026-09-27_transformer_time_code.md) ---
+
+def _tmodel(mode):
+    torch.manual_seed(0)
+    return D.Arm("transformer", DIM, seed=0, time_code=mode).double()
+
+
+def test_ablation_variants_have_the_same_parameters():
+    assert {m: _tmodel(m).blocks()["temporal"] for m in ("real", "index", "none")} == \
+        {"real": 33_472, "index": 33_472, "none": 33_472}
+    assert set(_tmodel("real").state_dict()) == set(_tmodel("none").state_dict())
+
+
+def test_index_code_equals_real_code_on_a_regular_full_window():
+    T = 10
+    f = torch.randn(2, T, DIM, generator=torch.Generator().manual_seed(3), dtype=torch.float64)
+    rel = ((torch.arange(T, dtype=torch.float64) - (T - 1)) * 0.1).expand(2, T).clone()
+    valid = torch.ones(2, T, dtype=torch.bool)
+    dt = torch.full((2, T), 0.1, dtype=torch.float64)
+    real, idx = _tmodel("real").eval(), _tmodel("index").eval()
+    idx.load_state_dict(real.state_dict())
+    with torch.no_grad():
+        assert torch.allclose(real(f, dt, valid, rel), idx(f, dt, valid, rel), atol=1e-9)
+
+
+@pytest.mark.parametrize("mode", ["index", "none"])
+def test_ablations_do_not_read_real_times(mode):
+    m = _tmodel(mode).eval()
+    f, dt, valid, rel = batch([10, 6, 3])
+    with torch.no_grad():
+        assert torch.equal(m(f, dt, valid, rel), m(f, dt, valid, 3 * rel - 1))
+
+
+def test_index_code_loses_the_gaps_that_real_time_keeps():
+    f, dt, valid, rel = batch([6])
+    real, idx = _tmodel("real").eval(), _tmodel("index").eval()
+    idx.load_state_dict(real.state_dict())
+    stretched = rel.clone()
+    stretched[:, :5] *= 2.0                       # same order, twice the gaps
+    with torch.no_grad():
+        assert not torch.allclose(real(f, dt, valid, rel), real(f, dt, valid, stretched))
+        assert torch.equal(idx(f, dt, valid, rel), idx(f, dt, valid, stretched))
+
+
+@pytest.mark.parametrize("mode", ["index", "none"])
+def test_padding_cannot_leak_in_the_ablations(mode):
+    m = _tmodel(mode).eval()
+    f, dt, valid, rel = batch([10, 6, 3])
+    f2 = f.clone()
+    f2[~valid] = 1e3 * torch.randn(int((~valid).sum()), DIM, dtype=torch.float64)
+    with torch.no_grad():
+        assert torch.allclose(m(f2, dt, valid, rel), m(f, dt, valid, rel), atol=1e-10)

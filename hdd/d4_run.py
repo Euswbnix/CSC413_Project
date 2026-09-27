@@ -151,8 +151,12 @@ class TransformerBlock(nn.Module):
     last valid token. MHA's inference fast path is switched off so eval runs the same maths as
     training (and no nested-tensor conversion can happen)."""
 
-    def __init__(self, hidden=64, heads=4, ff=128):
+    def __init__(self, hidden=64, heads=4, ff=128, time_code="real"):
         super().__init__()
+        # time_code: "real" is the registered model; "index" (positions renumbered after dropping)
+        # and "none" are the exploratory ablation of docs/explore_2026-09-27_transformer_time_code.md
+        assert time_code in ("real", "index", "none"), time_code
+        self.mode = time_code
         torch.backends.mha.set_fastpath_enabled(False)
         self.layer = nn.TransformerEncoderLayer(hidden, heads, dim_feedforward=ff, dropout=0.0,
                                                 activation="gelu", batch_first=True,
@@ -160,20 +164,30 @@ class TransformerBlock(nn.Module):
         j = torch.arange(hidden // 2, dtype=torch.float32)
         self.register_buffer("inv_freq", 10000.0 ** (-2 * j / hidden), persistent=False)
 
-    def time_code(self, rel):
-        p = (rel / 0.1)[..., None] * self.inv_freq                       # (B, T, hidden/2)
+    def code(self, p):
+        """The sinusoid for positions p in 0.1 s steps (real) or in kept-frame indices (index)."""
+        p = p[..., None] * self.inv_freq                                   # (B, T, hidden/2)
         return torch.stack([torch.sin(p), torch.cos(p)], -1).flatten(-2)   # dims 2j, 2j+1
+
+    def time_code(self, rel):
+        return self.code(rel / 0.1)
 
     def forward(self, x, rel, valid):
         T = x.shape[1]
         causal = torch.triu(torch.ones(T, T, dtype=torch.bool, device=x.device), 1)
-        return self.layer(x + self.time_code(rel), src_mask=causal, src_key_padding_mask=~valid)
+        if self.mode == "real":
+            x = x + self.time_code(rel)
+        elif self.mode == "index":
+            last = valid.long().sum(1, keepdim=True) - 1                   # the target frame
+            x = x + self.code((torch.arange(T, device=x.device)[None] - last).to(x.dtype))
+        return self.layer(x, src_mask=causal, src_key_padding_mask=~valid)
 
 
 class Arm(nn.Module):
     """Shared projection and readout; the temporal block is the only difference."""
 
-    def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False, dt_unit=1.0):
+    def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False, dt_unit=1.0,
+                 time_code="real"):
         super().__init__()
         self.kind = kind
         # dt arrives in seconds; the registered D4 runs used it as is (dt_unit 1.0). The exploratory
@@ -183,7 +197,7 @@ class Arm(nn.Module):
         self.proj = nn.Linear(dim, hidden)
         self.rnn = (nn.LSTM(hidden + 1, hidden, batch_first=True) if kind == "lstm" else
                     CfC(hidden, hidden) if kind == "cfc" else
-                    TransformerBlock(hidden) if kind == "transformer" else
+                    TransformerBlock(hidden, time_code=time_code) if kind == "transformer" else
                     LTCBlock(hidden, seed, ode_unfolds, compile_ltc))
         self.head = nn.Linear(hidden, 1)
 
@@ -270,11 +284,13 @@ def condition_metrics(per, prefix):
 
 def open_run(args, arm, lr, seed, run_id, ckpt, n_train, n_val):
     unfolds = f"_u{args.ode_unfolds}" if arm == "ltc" else ""
+    if arm == "transformer" and args.time_code != "real":
+        unfolds = f"_{args.time_code}"                     # the ablation variants, kept apart
     name = f"{arm}_lr{lr:g}_s{seed}{unfolds}"
     config = dict(vars(args), arm=arm, lr=lr, seed=seed, checkpoint=os.path.abspath(ckpt),
                   train_windows=n_train, val_windows=n_val, code_sha256=CODE_SHA256,
                   torch=torch.__version__)
-    project = PROJECT if args.dt_unit == 1.0 else EXPLORE_PROJECT
+    project = PROJECT if (args.dt_unit == 1.0 and args.time_code == "real") else EXPLORE_PROJECT
     return tracking.start(args.swanlab, project, name, config=config, group=f"{arm}{unfolds}",
                           tags=[arm, f"lr{lr:g}", f"seed{seed}"],
                           run_id=run_id or tracking.new_run_id(name))
@@ -290,7 +306,8 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
     only after the epoch's checkpoint is on disk."""
     torch.manual_seed(seed)
     model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds,
-                compile_ltc=args.compile_ltc, dt_unit=args.dt_unit).to(train_d.device)
+                compile_ltc=args.compile_ltc, dt_unit=args.dt_unit,
+                time_code=args.time_code).to(train_d.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
@@ -414,6 +431,8 @@ def main():
     ap.add_argument("--max-step", type=float, default=0.2)
     ap.add_argument("--dt-unit", type=float, default=1.0,
                     help="divide dt (seconds) by this; 1.0 = the registered D4 runs. Use a separate --out")
+    ap.add_argument("--time-code", default="real", choices=("real", "index", "none"),
+                    help="Transformer only: real = registered; index/none = exploratory ablation (separate --out)")
     ap.add_argument("--tag", default="", help="suffix for the output files, so parallel runs do not collide")
     tracking.add_argument(ap)
     a = ap.parse_args()
