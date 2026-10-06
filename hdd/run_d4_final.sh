@@ -2,13 +2,15 @@
 # Stage 2: eight seeds per arm at the rate the grid chose. Usage: run_d4_final.sh ARM "SEEDS" ["SEEDS" ...]
 # Each quoted group of seeds is one process; the groups run in parallel. Extra arguments for
 # d4_run.py (e.g. --ode-unfolds 24 for LTC) go in $D4_EXTRA_ARGS; $D4_OUT (default d4/dinov2) is
-# where the grid results are read and the runs written.
+# where the grid results are read and the runs written; $D4_RUNNER (default d4_run.py) is the
+# training script, e.g. anticip_run.py.
 umask 077
 cd "$HOME/workspace/hdd"
 . ./env.sh
 export OMP_NUM_THREADS=4 PYTHONPATH="$HOME/workspace/hdd" XFORMERS_DISABLED=1 PYTHONUNBUFFERED=1
 PY="$HOME/miniconda/envs/DL/bin/python"
 OUT="${D4_OUT:-d4/dinov2}"
+RUNNER="${D4_RUNNER:-d4_run.py}"
 arm="$1"; shift
 lr=$("$PY" - "$arm" "$OUT" <<'PYEOF'
 import glob, json, sys
@@ -29,7 +31,7 @@ PYEOF
 ) || exit 1
 echo "$arm: chosen lr $lr"
 for group in "$@"; do
-  nice -n 10 "$PY" -W ignore d4_run.py --cache cache/dinov2_10hz --arm "$arm" --stage final \
+  nice -n 10 "$PY" -W ignore "$RUNNER" --cache cache/dinov2_10hz --arm "$arm" --stage final \
       --lr "$lr" --seeds $group --out "$OUT" $D4_EXTRA_ARGS 2>&1 | grep --line-buffered -v Warning &
 done
 wait

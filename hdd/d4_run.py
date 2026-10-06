@@ -187,7 +187,9 @@ class Arm(nn.Module):
     """Shared projection and readout; the temporal block is the only difference."""
 
     def __init__(self, kind, dim, hidden=64, seed=0, ode_unfolds=6, compile_ltc=False, dt_unit=1.0,
-                 time_code="real"):
+                 time_code="real", n_out=1):
+        """kind "frame" (no history: an MLP on the current frame, 33,088 parameters) and n_out > 1
+        (one output per forecast horizon) exist for hdd/anticip_run.py; D4 uses neither."""
         super().__init__()
         self.kind = kind
         # dt arrives in seconds; the registered D4 runs used it as is (dt_unit 1.0). The exploratory
@@ -198,12 +200,18 @@ class Arm(nn.Module):
         self.rnn = (nn.LSTM(hidden + 1, hidden, batch_first=True) if kind == "lstm" else
                     CfC(hidden, hidden) if kind == "cfc" else
                     TransformerBlock(hidden, time_code=time_code) if kind == "transformer" else
+                    nn.Sequential(nn.Linear(hidden, 4 * hidden), nn.GELU(),
+                                  nn.Linear(4 * hidden, hidden)) if kind == "frame" else
                     LTCBlock(hidden, seed, ode_unfolds, compile_ltc))
-        self.head = nn.Linear(hidden, 1)
+        self.head = nn.Linear(hidden, n_out)
 
     def forward(self, f, dt, valid, rel=None):
         """rel: each kept frame's time minus the target frame's, in seconds (Transformer only)."""
         x = self.proj(self.norm(f)) * valid[:, :, None]
+        last = valid.float().cumsum(1).argmax(1)
+        rows = torch.arange(len(x), device=x.device)
+        if self.kind == "frame":                       # the current frame only, whatever was kept
+            return self.head(self.rnn(x[rows, last])).squeeze(-1)
         if self.dt_unit != 1.0:
             dt = dt / self.dt_unit
         if self.kind == "lstm":
@@ -214,8 +222,7 @@ class Arm(nn.Module):
             out = self.rnn(x, rel, valid)
         else:
             out = self.rnn(x, dt)
-        last = valid.float().cumsum(1).argmax(1)
-        return self.head(out[torch.arange(len(out), device=out.device), last]).squeeze(-1)
+        return self.head(out[rows, last]).squeeze(-1)
 
     def blocks(self):
         n = lambda m: sum(p.numel() for p in m.parameters() if p.requires_grad)
@@ -290,24 +297,29 @@ def open_run(args, arm, lr, seed, run_id, ckpt, n_train, n_val):
     config = dict(vars(args), arm=arm, lr=lr, seed=seed, checkpoint=os.path.abspath(ckpt),
                   train_windows=n_train, val_windows=n_val, code_sha256=CODE_SHA256,
                   torch=torch.__version__)
-    project = PROJECT if (args.dt_unit == 1.0 and args.time_code == "real") else EXPLORE_PROJECT
+    project = getattr(args, "project", None) or (
+        PROJECT if (args.dt_unit == 1.0 and args.time_code == "real") else EXPLORE_PROJECT)
     return tracking.start(args.swanlab, project, name, config=config, group=f"{arm}{unfolds}",
                           tags=[arm, f"lr{lr:g}", f"seed{seed}"],
                           run_id=run_id or tracking.new_run_id(name))
 
 
-def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
+def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag, score=None, to_log=None, n_out=1):
     """Trains with a checkpoint after every epoch: a run that is killed (or a machine that is shut
     down) resumes from the last finished epoch with the same model, optimiser and random streams,
     so the result is the one an uninterrupted run would have given.
 
+    score, to_log and n_out default to D4's (score_all, condition_metrics, one output);
+    hdd/anticip_run.py passes its own to train one output per forecast horizon.
+
     Returns the SwanLab run still open (the caller logs the final evaluation and finishes it). Its
     id is kept in the checkpoint, so a resumed run continues the same chart. Metrics are logged
     only after the epoch's checkpoint is on disk."""
+    score, to_log = score or score_all, to_log or condition_metrics
     torch.manual_seed(seed)
     model = Arm(arm, dim, seed=seed, ode_unfolds=args.ode_unfolds,
                 compile_ltc=args.compile_ltc, dt_unit=args.dt_unit,
-                time_code=args.time_code).to(train_d.device)
+                time_code=args.time_code, n_out=n_out).to(train_d.device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     rng = np.random.default_rng(seed)
     gen = torch.Generator(device=train_d.device).manual_seed(seed)
@@ -367,7 +379,7 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
         if diverged:
             print(f"[{tag}] lr {lr:g} seed {seed}: DIVERGED ({diverged}); keeping the best earlier state")
             break
-        mean, per, _ = score_all(model, val_d, y_val, mu, sd, args.keep_rates, 1)
+        mean, per, _ = score(model, val_d, y_val, mu, sd, args.keep_rates, 1)
         if not np.isfinite(mean):
             diverged = f"non-finite validation score in epoch {ep + 1}"
             print(f"[{tag}] lr {lr:g} seed {seed}: DIVERGED ({diverged}); keeping the best earlier state")
@@ -391,7 +403,7 @@ def train(arm, train_d, val_d, y_val, lr, seed, args, mu, sd, dim, tag):
                  "time/epoch_min": (time.perf_counter() - t_ep) / 60,
                  "gpu/peak_alloc_gb": (torch.cuda.max_memory_allocated() / 2 ** 30
                                        if torch.cuda.is_available() else None),
-                 **condition_metrics(per, "val")}, step=ep + 1)
+                 **to_log(per, "val")}, step=ep + 1)
         if bad >= args.patience:
             break
     if diverged:

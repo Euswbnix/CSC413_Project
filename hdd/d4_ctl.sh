@@ -4,7 +4,8 @@
 #   bash d4_ctl.sh start [name [args]]   # start, or resume from checkpoints after a shutdown
 #   bash d4_ctl.sh stop [name]      # stop everything; the last finished epoch of each run is kept
 #   bash d4_ctl.sh status [name]
-# name: ltc24 (default), transformer, or test_eval (args: rehearse | test [--resume]).
+# name: ltc24 (default), transformer, dtnorm, tcode, anticip, or test_eval / anticip_test
+# (args: rehearse | test [--resume]).
 # Log: d4_<name>.log; any further arguments go to run_<name>.sh.
 cd "$HOME/workspace/hdd"
 . ./env.sh
@@ -32,5 +33,5 @@ case "$1" in
     else
       echo "not running"
     fi ;;
-  *) echo "usage: $0 start|stop|status [ltc24|transformer|test_eval [args]]"; exit 2 ;;
+  *) echo "usage: $0 start|stop|status [name [args]]   (name = a run_<name>.sh pipeline)"; exit 2 ;;
 esac
