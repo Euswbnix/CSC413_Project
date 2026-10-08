@@ -2,6 +2,8 @@
 # Steering anticipation (docs/plan_2026-10-05_steering_anticipation.md): for each of the five arms,
 # the four-point learning-rate grid at seed 0 and then seeds 0-7 at the chosen rate, into
 # d4/anticip/. The four fast arms share one branch; LTC (24 sub-steps, compiled cell) has its own.
+# A fast arm's eight seeds run as four processes of two seeds each; the grouping only sets how many
+# run at once, every (arm, rate, seed) being its own checkpointed run.
 # Validation only. Every epoch is checkpointed, so rerunning this resumes where it stopped.
 umask 077
 cd "$HOME/workspace/hdd"
@@ -21,7 +23,7 @@ export -f grid_one
       | xargs -P 4 -L1 bash -c 'grid_one "$0" "$1"'
   echo "$(date '+%F %T') fast arms grid done"
   for arm in frame lstm cfc transformer; do
-    bash run_d4_final.sh $arm "0 1 2 3" "4 5 6 7"
+    bash run_d4_final.sh $arm "0 1" "2 3" "4 5" "6 7"
   done
   echo "$(date '+%F %T') fast arms FINAL DONE"
 ) &
